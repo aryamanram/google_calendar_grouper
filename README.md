@@ -1,1 +1,1 @@
-# google_calendar_multishare
+# google_calendar_grouper
