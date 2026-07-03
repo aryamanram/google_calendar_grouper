@@ -1,0 +1,22 @@
+{
+  "name": "calendar-grouper-backend",
+  "version": "0.1.0",
+  "description": "Backend sync service for Calendar Grouper",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "dependencies": {
+    "express": "^4.21.0",
+    "googleapis": "^144.0.0",
+    "firebase-admin": "^12.7.0",
+    "cors": "^2.8.5",
+    "helmet": "^8.0.0",
+    "uuid": "^10.0.0",
+    "dotenv": "^16.4.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

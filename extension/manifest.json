@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "Calendar Grouper",
+  "version": "0.1.0",
+  "description": "Group your Google Calendars into a single shareable calendar",
+  "permissions": ["identity", "storage"],
+  "host_permissions": ["https://www.googleapis.com/*"],
+  "action": {
+    "default_popup": "popup/dist/index.html",
+    "default_icon": {
+      "128": "assets/icon128.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "icons": {
+    "128": "assets/icon128.png"
+  }
+}
