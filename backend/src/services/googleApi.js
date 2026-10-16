@@ -41,6 +41,53 @@ function getCalendarClient(authClient) {
 }
 
 // ---------------------------------------------------------------------------
+// Merged calendars are tagged in their description so we can always tell
+// them apart from the user's own calendars (never offer them as a source,
+// and find them during cleanup even if Firestore lost track of them).
+// ---------------------------------------------------------------------------
+const MANAGED_TAG = "[managed-by-calendar-grouper]";
+
+function isManagedCalendar(cal) {
+  return typeof cal.description === "string" && cal.description.includes(MANAGED_TAG);
+}
+
+// ---------------------------------------------------------------------------
+// Retry with exponential backoff
+//
+// Google returns 403 rateLimitExceeded / userRateLimitExceeded or 429 when we
+// write events too quickly, and occasional 5xx errors. Those are temporary,
+// so we wait and try again: ~0.5s, 1s, 2s, 4s, 8s (+ random jitter).
+// Anything else (bad request, not found, daily quota) fails immediately.
+// ---------------------------------------------------------------------------
+const RETRYABLE_REASONS = new Set(["rateLimitExceeded", "userRateLimitExceeded"]);
+const MAX_ATTEMPTS = 6;
+
+function isRetryable(err) {
+  const code = err.code || err.response?.status;
+  if (code === 429 || (code >= 500 && code < 600)) return true;
+  if (code === 403) {
+    const reason = err.errors?.[0]?.reason || err.response?.data?.error?.errors?.[0]?.reason;
+    return RETRYABLE_REASONS.has(reason);
+  }
+  return false;
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function withRetry(fn, label = "Google API call") {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (attempt >= MAX_ATTEMPTS || !isRetryable(err)) throw err;
+      const delay = 500 * 2 ** (attempt - 1) + Math.floor(Math.random() * 250);
+      console.warn(`${label} rate-limited (attempt ${attempt}), retrying in ${delay}ms`);
+      await sleep(delay);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Calendar operations
 // ---------------------------------------------------------------------------
 
@@ -48,7 +95,7 @@ function getCalendarClient(authClient) {
 async function listCalendars(userId) {
   const auth = await getAuthClient(userId);
   const cal = getCalendarClient(auth);
-  const res = await cal.calendarList.list();
+  const res = await withRetry(() => cal.calendarList.list(), "calendarList.list");
   return res.data.items || [];
 }
 
@@ -56,25 +103,42 @@ async function listCalendars(userId) {
 async function createCalendar(userId, summary) {
   const auth = await getAuthClient(userId);
   const cal = getCalendarClient(auth);
-  const res = await cal.calendars.insert({
-    requestBody: { summary },
-  });
+  const res = await withRetry(
+    () =>
+      cal.calendars.insert({
+        requestBody: {
+          summary,
+          description: `Shared view of my schedule. ${MANAGED_TAG}`,
+        },
+      }),
+    "calendars.insert"
+  );
   return res.data; // { id, summary, ... }
+}
+
+/** Rename a calendar (used when the shared calendar's name is edited). */
+async function renameCalendar(userId, calendarId, summary) {
+  const auth = await getAuthClient(userId);
+  const cal = getCalendarClient(auth);
+  await withRetry(
+    () => cal.calendars.patch({ calendarId, requestBody: { summary } }),
+    "calendars.patch"
+  );
 }
 
 /** Delete a calendar entirely. */
 async function deleteCalendar(userId, calendarId) {
   const auth = await getAuthClient(userId);
   const cal = getCalendarClient(auth);
-  await cal.calendars.delete({ calendarId });
+  await withRetry(() => cal.calendars.delete({ calendarId }), "calendars.delete");
 }
 
 /**
- * List events that changed since `syncToken` or `updatedMin`.
+ * List events on a calendar.
  *
- * On first sync pass updatedMin as a far-past ISO string and no syncToken.
- * Google returns a nextSyncToken with the response — store it and pass it
- * on subsequent calls to get only deltas.
+ * First sync (no syncToken): returns every event that *happens* between
+ * 30 days ago and one year from now. Google also returns a nextSyncToken —
+ * store it and pass it next time to get only what changed since.
  */
 async function listEvents(userId, calendarId, { syncToken, updatedMin } = {}) {
   const auth = await getAuthClient(userId);
@@ -100,7 +164,7 @@ async function listEvents(userId, calendarId, { syncToken, updatedMin } = {}) {
 
   do {
     if (pageToken) params.pageToken = pageToken;
-    const res = await cal.events.list(params);
+    const res = await withRetry(() => cal.events.list({ ...params }), "events.list");
     allEvents.push(...(res.data.items || []));
     pageToken = res.data.nextPageToken;
     nextSyncToken = res.data.nextSyncToken;
@@ -113,10 +177,10 @@ async function listEvents(userId, calendarId, { syncToken, updatedMin } = {}) {
 async function insertEvent(userId, calendarId, eventBody) {
   const auth = await getAuthClient(userId);
   const cal = getCalendarClient(auth);
-  const res = await cal.events.insert({
-    calendarId,
-    requestBody: eventBody,
-  });
+  const res = await withRetry(
+    () => cal.events.insert({ calendarId, requestBody: eventBody }),
+    "events.insert"
+  );
   return res.data;
 }
 
@@ -124,11 +188,10 @@ async function insertEvent(userId, calendarId, eventBody) {
 async function updateEvent(userId, calendarId, eventId, eventBody) {
   const auth = await getAuthClient(userId);
   const cal = getCalendarClient(auth);
-  const res = await cal.events.update({
-    calendarId,
-    eventId,
-    requestBody: eventBody,
-  });
+  const res = await withRetry(
+    () => cal.events.update({ calendarId, eventId, requestBody: eventBody }),
+    "events.update"
+  );
   return res.data;
 }
 
@@ -136,7 +199,7 @@ async function updateEvent(userId, calendarId, eventId, eventBody) {
 async function deleteEvent(userId, calendarId, eventId) {
   const auth = await getAuthClient(userId);
   const cal = getCalendarClient(auth);
-  await cal.events.delete({ calendarId, eventId });
+  await withRetry(() => cal.events.delete({ calendarId, eventId }), "events.delete");
 }
 
 // ---------------------------------------------------------------------------
@@ -211,10 +274,14 @@ async function stopWatch(userId, channelId, resourceId) {
 // Exports
 // ---------------------------------------------------------------------------
 module.exports = {
+  MANAGED_TAG,
+  isManagedCalendar,
+  withRetry,
   createOAuth2Client,
   getAuthClient,
   listCalendars,
   createCalendar,
+  renameCalendar,
   deleteCalendar,
   listEvents,
   insertEvent,

@@ -105,11 +105,17 @@ router.get("/calendars", async (req, res) => {
   if (!userId) return res.status(400).json({ error: "Missing userId" });
 
   try {
-    const { listCalendars } = require("../services/googleApi");
-    const calendars = await listCalendars(userId);
+    const { listCalendars, isManagedCalendar } = require("../services/googleApi");
+    const { listGroups } = require("../models/firestore");
+    const [calendars, groups] = await Promise.all([listCalendars(userId), listGroups(userId)]);
+
+    // Hide our own merged calendars. Offering one as a source would copy the
+    // merged calendar into itself and duplicate every event.
+    const mergedIds = new Set(groups.map((g) => g.mergedCalendarId).filter(Boolean));
+    const sources = calendars.filter((c) => !mergedIds.has(c.id) && !isManagedCalendar(c));
 
     // Return a simplified list — the popup only needs id, summary, and color
-    const simplified = calendars.map((c) => ({
+    const simplified = sources.map((c) => ({
       id: c.id,
       summary: c.summary,
       backgroundColor: c.backgroundColor,

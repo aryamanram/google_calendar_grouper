@@ -60,6 +60,9 @@ async function createGroup(userId, group) {
     sourceCalendars: group.sourceCalendars || [],
     // sourceCalendars: [{ id, summary, detailLevel: "full" | "busy" }]
     sharedWith: group.sharedWith || [],
+    // "syncing" while events are being copied, then "ready" or "error"
+    status: group.status || "ready",
+    lastError: null,
     lastSyncedAt: null,
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
   };
@@ -97,21 +100,23 @@ async function listGroups(userId) {
 }
 
 async function deleteGroup(userId, groupId) {
-  // Delete event mappings subcollection first
-  const mappings = await getDb()
+  const groupRef = getDb()
     .collection("users")
     .doc(userId)
     .collection("groups")
-    .doc(groupId)
-    .collection("eventMappings")
-    .get();
+    .doc(groupId);
 
-  const batch = getDb().batch();
-  mappings.docs.forEach((doc) => batch.delete(doc.ref));
-  batch.delete(
-    getDb().collection("users").doc(userId).collection("groups").doc(groupId)
-  );
-  await batch.commit();
+  // A Firestore batch holds at most 500 writes, and a group can have
+  // thousands of event mappings, so delete them in chunks.
+  const mappings = await groupRef.collection("eventMappings").get();
+  const docs = mappings.docs;
+  for (let i = 0; i < docs.length; i += 400) {
+    const batch = getDb().batch();
+    docs.slice(i, i + 400).forEach((doc) => batch.delete(doc.ref));
+    await batch.commit();
+  }
+
+  await groupRef.delete();
 }
 
 // ---------------------------------------------------------------------------

@@ -2,6 +2,26 @@ const googleApi = require("./googleApi");
 const db = require("../models/firestore");
 
 // ---------------------------------------------------------------------------
+// Cancellation
+//
+// When a group is deleted mid-sync, the copy loop checks this set and stops
+// instead of writing events into a calendar that no longer exists.
+// ---------------------------------------------------------------------------
+const cancelledGroups = new Set();
+
+function cancelGroup(groupId) {
+  cancelledGroups.add(groupId);
+  // Group IDs are never reused; forget the entry after a while.
+  setTimeout(() => cancelledGroups.delete(groupId), 10 * 60 * 1000).unref();
+}
+
+function assertNotCancelled(groupId) {
+  if (cancelledGroups.has(groupId)) {
+    throw new Error("Shared calendar was deleted; stopping sync");
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Event body builder
 //
 // Converts a source event into the body we insert/update on the merged
@@ -54,8 +74,11 @@ function buildMergedEventBody(sourceEvent, detailLevel) {
  */
 async function syncSourceCalendar(userId, groupId, sourceCalendarId, mergedCalendarId, detailLevel) {
   // Retrieve stored sync token for incremental sync
+  assertNotCancelled(groupId);
   const group = await db.getGroup(userId, groupId);
+  if (!group) throw new Error(`Group ${groupId} no longer exists`);
   const calConfig = (group.sourceCalendars || []).find((c) => c.id === sourceCalendarId);
+  const label = calConfig?.summary || sourceCalendarId;
   const syncToken = calConfig?.syncToken || null;
 
   let result;
@@ -84,6 +107,7 @@ async function syncSourceCalendar(userId, groupId, sourceCalendarId, mergedCalen
   let deleted = 0;
 
   for (const event of events) {
+    assertNotCancelled(groupId);
     // Skip cancelled-but-not-mapped events (nothing to do)
     const existing = await db.getEventMapping(userId, groupId, sourceCalendarId, event.id);
 
@@ -138,9 +162,7 @@ async function syncSourceCalendar(userId, groupId, sourceCalendarId, mergedCalen
   // Update last synced timestamp
   await db.updateGroup(userId, groupId, { lastSyncedAt: new Date().toISOString() });
 
-  console.log(
-    `Synced ${sourceCalendarId} → ${mergedCalendarId}: +${inserted} ~${updated} -${deleted}`
-  );
+  console.log(`Synced "${label}": +${inserted} added, ~${updated} updated, -${deleted} removed`);
 
   return { inserted, updated, deleted };
 }
@@ -178,6 +200,7 @@ async function purgeSourceCalendar(userId, groupId, sourceCalendarId, mergedCale
   let removed = 0;
 
   for (const mapping of mappings) {
+    assertNotCancelled(groupId);
     try {
       await googleApi.deleteEvent(userId, mergedCalendarId, mapping.mergedEventId);
     } catch (e) {
@@ -192,6 +215,7 @@ async function purgeSourceCalendar(userId, groupId, sourceCalendarId, mergedCale
 }
 
 module.exports = {
+  cancelGroup,
   syncSourceCalendar,
   syncGroup,
   purgeSourceCalendar,

@@ -6,13 +6,21 @@ const db = require("../models/firestore");
 // Register watches for all source calendars in a group
 // ---------------------------------------------------------------------------
 
-async function registerWatchesForGroup(userId, groupId) {
+/**
+ * @param {string[]} [onlyCalendarIds] register only these calendars
+ *   (used when calendars are added to an existing group, so we don't create
+ *   duplicate channels for calendars that already have one).
+ */
+async function registerWatchesForGroup(userId, groupId, onlyCalendarIds) {
   const group = await db.getGroup(userId, groupId);
   if (!group) throw new Error(`Group ${groupId} not found`);
 
   const results = [];
+  const targets = onlyCalendarIds
+    ? group.sourceCalendars.filter((c) => onlyCalendarIds.includes(c.id))
+    : group.sourceCalendars;
 
-  for (const cal of group.sourceCalendars) {
+  for (const cal of targets) {
     const channelId = uuidv4();
 
     try {
@@ -30,7 +38,9 @@ async function registerWatchesForGroup(userId, groupId) {
       results.push({ calendarId: cal.id, channelId: watch.channelId, expiration: watch.expiration });
       console.log(`Watch registered: ${cal.id} → channel ${watch.channelId}, expires ${new Date(watch.expiration).toISOString()}`);
     } catch (err) {
-      console.error(`Failed to register watch for ${cal.id}:`, err.message);
+      // Expected on localhost: Google only delivers webhooks to a verified
+      // public HTTPS domain. Sync still works via the manual sync endpoint.
+      console.warn(`Watch not registered for ${cal.summary || cal.id}: ${err.message}`);
       results.push({ calendarId: cal.id, error: err.message });
     }
   }
