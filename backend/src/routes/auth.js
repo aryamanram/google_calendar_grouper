@@ -60,6 +60,7 @@ router.get("/callback", async (req, res) => {
     const userId = profile.id; // stable numeric Google ID
 
     await saveUserTokens(userId, tokens);
+    require("../services/googleApi").forgetAuthClient(userId); // use the new tokens
 
     // Send a simple HTML page that posts a message back to the extension
     // so the popup knows auth succeeded.
@@ -105,11 +106,17 @@ router.get("/calendars", async (req, res) => {
   if (!userId) return res.status(400).json({ error: "Missing userId" });
 
   try {
-    const { listCalendars } = require("../services/googleApi");
-    const calendars = await listCalendars(userId);
+    const { listCalendars, isManagedCalendar } = require("../services/googleApi");
+    const { listGroups } = require("../models/firestore");
+    const [calendars, groups] = await Promise.all([listCalendars(userId), listGroups(userId)]);
+
+    // Hide our own merged calendars. Offering one as a source would copy the
+    // merged calendar into itself and duplicate every event.
+    const mergedIds = new Set(groups.map((g) => g.mergedCalendarId).filter(Boolean));
+    const sources = calendars.filter((c) => !mergedIds.has(c.id) && !isManagedCalendar(c));
 
     // Return a simplified list — the popup only needs id, summary, and color
-    const simplified = calendars.map((c) => ({
+    const simplified = sources.map((c) => ({
       id: c.id,
       summary: c.summary,
       backgroundColor: c.backgroundColor,

@@ -9,6 +9,7 @@ const webhookRoutes = require("./routes/webhooks");
 const shareRoutes = require("./routes/share");
 const { initFirestore } = require("./models/firestore");
 const { startWatchRenewalJob } = require("./services/watchManager");
+const { startAutoSync } = require("./services/autoSync");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -53,6 +54,10 @@ async function start() {
 
   // Renew expiring watch channels once per hour
   startWatchRenewalJob();
+
+  // Pick up new and edited events every couple of minutes. Needed on
+  // localhost, where Google can't deliver webhooks; a safety net once deployed.
+  startAutoSync();
 
   app.listen(PORT, () => {
     console.log(`Calendar Grouper backend listening on :${PORT}`);

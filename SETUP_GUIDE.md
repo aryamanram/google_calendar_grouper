@@ -284,10 +284,10 @@ The automatic handoff from sign-in to the extension isn't built yet, so you'll s
    - Click a calendar's dot to switch between **blue** (full details) and **red** (busy only).
    - Click **Create**.
 2. Watch the backend logs:
-   - `Synced ... +N ~0 -0` means it worked.
-   - `Failed to register watch ...` is **expected on localhost** and is not a bug. Live webhooks need a public, verified HTTPS domain, which is a later milestone.
+   - `Synced "Work": +N added ...` means it worked.
+   - `Watch not registered for ...` is **expected on localhost** and is not a bug. Live webhooks need a public, verified HTTPS domain, which is a later milestone.
 3. Open Google Calendar. The merged calendar should appear, containing your events.
-4. Because webhooks don't work locally, trigger a sync by hand whenever you want to test changes:
+4. New, edited and deleted events sync on their own. The backend checks every 2 minutes (`SYNC_POLL_SECONDS` in `.env`), so a change shows up on the shared calendar within a couple of minutes. To sync immediately, click **Sync now** in the popup, or:
    ```bash
    curl "http://localhost:3000/groups?userId=YOUR_USER_ID"
    # copy the group's "id" from the output, then:
@@ -295,9 +295,9 @@ The automatic handoff from sign-in to the extension isn't built yet, so you'll s
      -H "Content-Type: application/json" \
      -d '{"userId":"YOUR_USER_ID"}'
    ```
-5. Test the full cycle: add an event to Work → run the sync → it appears on the merged calendar. Delete it → run the sync → it disappears.
+5. Test the full cycle: add an event to Work and wait about 2 minutes. It appears on the shared calendar. Delete it, and it disappears on the next check. Editing or deleting a single occurrence of a repeating event works the same way.
 
-**✅ Checkpoint:** The merged calendar mirrors the calendars you selected, and manual sync picks up changes.
+**✅ Checkpoint:** The merged calendar mirrors the calendars you selected, and changes appear within a couple of minutes without any manual step.
 
 ---
 
@@ -326,4 +326,5 @@ While the app is in **Testing** mode, Google expires refresh tokens after about 
 | Calendar API 403 / insufficient scopes | 5 | The Calendar checkbox was ticked during consent; sign in again |
 | Blank popup | 6 | Inspect the popup → Console; send me the error |
 | CORS error in popup | 6 | `EXTENSION_ID` matches the loaded extension, and the backend was restarted |
-| "Failed to register watch" | 8 | Expected on localhost; ignore it |
+| "Watch not registered" | 8 | Expected on localhost; auto-sync covers it |
+| New events don't appear | 8 | Wait 2 minutes or click **Sync now**; check the backend log for "Auto-sync failed" |

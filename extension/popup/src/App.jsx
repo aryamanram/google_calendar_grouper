@@ -13,12 +13,18 @@ async function api(path, options = {}) {
     headers: { "Content-Type": "application/json" },
     ...options,
   });
+  const body = await res.json().catch(() => ({}));
   if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || `API error ${res.status}`);
+    const err = new Error(body.error || `API error ${res.status}`);
+    err.status = res.status;
+    err.body = body;
+    throw err;
   }
-  return res.json();
+  return body;
 }
+
+const COOLDOWN_MS = 3000; // buttons stay disabled briefly after each action
+const POLL_MS = 2500;     // how often to check sync progress
 
 // ---------------------------------------------------------------------------
 // Styles — Google Calendar aesthetic
@@ -229,7 +235,39 @@ const styles = {
     padding: "1px 6px",
     borderRadius: 99,
   },
+  notice: (kind) => ({
+    padding: "8px 16px",
+    fontSize: 12,
+    color: kind === "error" ? "#d93025" : kind === "success" ? "#137333" : "#1967d2",
+    background: kind === "error" ? "#fce8e6" : kind === "success" ? "#e6f4ea" : "#e8f0fe",
+  }),
+  statusLine: (state) => ({
+    padding: "10px 16px 2px",
+    borderTop: "1px solid #e0e0e0",
+    fontSize: 12,
+    color: state === "error" ? "#d93025" : state === "syncing" ? "#b06000" : "#137333",
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+  }),
+  footer: {
+    padding: "8px 16px 12px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  btnDanger: (confirming) => ({
+    padding: "6px 10px",
+    fontSize: 12,
+    background: confirming ? "#d93025" : "transparent",
+    color: confirming ? "#fff" : "#d93025",
+    border: "1px solid #d93025",
+    borderRadius: 4,
+    cursor: "pointer",
+    fontWeight: 500,
+  }),
 };
+
 
 // ---------------------------------------------------------------------------
 // Component
@@ -238,7 +276,9 @@ export default function App() {
   const [userId, setUserId] = useState(null);
   const [email, setEmail] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+
+  // { kind: "info" | "success" | "error", text }
+  const [notice, setNotice] = useState(null);
 
   // Calendar data from Google
   const [calendars, setCalendars] = useState([]);
@@ -250,13 +290,37 @@ export default function App() {
   // Local calendar selection state: { [calId]: { checked, detailLevel } }
   const [selections, setSelections] = useState({});
 
+  // What the popup is doing right now: null | "creating" | "updating" | "syncing" | "deleting"
+  const [busy, setBusy] = useState(null);
+  const [coolingDown, setCoolingDown] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
   // Share input
   const [shareEmail, setShareEmail] = useState("");
   const [sharing, setSharing] = useState(false);
 
+  const syncing = group?.status === "syncing";
+  const locked = !!busy || coolingDown || syncing;
+
+  function startCooldown() {
+    setCoolingDown(true);
+    setTimeout(() => setCoolingDown(false), COOLDOWN_MS);
+  }
+
+  // Build checkbox state from a saved group (or check everything if none).
+  function selectionsFor(cals, savedGroup) {
+    const sel = {};
+    for (const cal of cals) {
+      const inGroup = savedGroup?.sourceCalendars.find((s) => s.id === cal.id);
+      sel[cal.id] = savedGroup
+        ? { checked: !!inGroup, detailLevel: inGroup?.detailLevel || "full" }
+        : { checked: true, detailLevel: "full" };
+    }
+    return sel;
+  }
+
   // ------ Auth ------
   useEffect(() => {
-    // Check if we're already logged in
     if (typeof chrome !== "undefined" && chrome.runtime?.sendMessage) {
       chrome.runtime.sendMessage({ type: "GET_AUTH_STATE" }, (response) => {
         if (response?.userId) {
@@ -266,7 +330,7 @@ export default function App() {
         setLoading(false);
       });
     } else {
-      // Running outside extension (dev mode) — check localStorage fallback
+      // Running outside the extension (vite dev server)
       const stored = localStorage.getItem("calGrouper_userId");
       if (stored) {
         setUserId(stored);
@@ -276,50 +340,56 @@ export default function App() {
     }
   }, []);
 
-  // ------ Load calendars + existing group when userId is set ------
-  useEffect(() => {
+  // ------ Load calendars + existing group ------
+  const load = useCallback(async () => {
     if (!userId) return;
+    try {
+      const [calRes, groupRes] = await Promise.all([
+        api(`/auth/calendars?userId=${userId}`),
+        api(`/groups?userId=${userId}`),
+      ]);
+      const existing = groupRes.groups[0] || null;
+      setCalendars(calRes.calendars);
+      setGroup(existing);
+      if (existing) setGroupName(existing.name);
+      setSelections(selectionsFor(calRes.calendars, existing));
+    } catch (err) {
+      setNotice({ kind: "error", text: err.message });
+    }
+  }, [userId]);
 
-    async function load() {
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  // ------ Poll while events are being copied ------
+  // Paused during a delete. `alive` turns false when this effect is torn down
+  // (delete starts, group changes, popup closes), so a request that was
+  // already in flight can't bring a deleted group back.
+  useEffect(() => {
+    if (!userId || !group?.id || group.status !== "syncing" || busy === "deleting") return;
+
+    let alive = true;
+    const timer = setInterval(async () => {
       try {
-        const [calRes, groupRes] = await Promise.all([
-          api(`/auth/calendars?userId=${userId}`),
-          api(`/groups?userId=${userId}`),
-        ]);
-
-        setCalendars(calRes.calendars);
-
-        // For MVP, use the first group if it exists
-        const existing = groupRes.groups[0] || null;
-        setGroup(existing);
-
-        if (existing) {
-          setGroupName(existing.name);
-          // Rebuild selections from the saved group config
-          const sel = {};
-          for (const cal of calRes.calendars) {
-            const inGroup = existing.sourceCalendars.find((s) => s.id === cal.id);
-            sel[cal.id] = {
-              checked: !!inGroup,
-              detailLevel: inGroup?.detailLevel || "full",
-            };
-          }
-          setSelections(sel);
-        } else {
-          // Default: check all calendars
-          const sel = {};
-          for (const cal of calRes.calendars) {
-            sel[cal.id] = { checked: true, detailLevel: "full" };
-          }
-          setSelections(sel);
+        const res = await api(`/groups/${group.id}?userId=${userId}`);
+        if (!alive) return;
+        setGroup(res.group);
+        if (res.group.status === "ready") {
+          setNotice({ kind: "success", text: "All events copied. Your shared calendar is up to date." });
+        } else if (res.group.status === "error") {
+          setNotice({ kind: "error", text: `Sync stopped: ${res.group.lastError}` });
         }
       } catch (err) {
-        setError(err.message);
+        if (alive && err.status === 404) setGroup(null); // deleted elsewhere
       }
-    }
+    }, POLL_MS);
 
-    load();
-  }, [userId]);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, [userId, group?.id, group?.status, busy]);
 
   // ------ Handlers ------
   function handleLogin() {
@@ -331,6 +401,7 @@ export default function App() {
   }
 
   function toggleCalendar(calId) {
+    if (locked) return;
     setSelections((prev) => ({
       ...prev,
       [calId]: { ...prev[calId], checked: !prev[calId]?.checked },
@@ -338,6 +409,7 @@ export default function App() {
   }
 
   function toggleDetailLevel(calId) {
+    if (locked) return;
     setSelections((prev) => ({
       ...prev,
       [calId]: {
@@ -348,7 +420,9 @@ export default function App() {
   }
 
   async function handleSave() {
-    setError(null);
+    if (locked) return; // ignores double-clicks and clicks during a sync
+    setNotice(null);
+
     const sourceCalendars = calendars
       .filter((c) => selections[c.id]?.checked)
       .map((c) => ({
@@ -358,36 +432,98 @@ export default function App() {
       }));
 
     if (sourceCalendars.length === 0) {
-      setError("Select at least one calendar");
+      setNotice({ kind: "error", text: "Select at least one calendar." });
+      return;
+    }
+    if (!groupName.trim()) {
+      setNotice({ kind: "error", text: "Give the shared calendar a name." });
       return;
     }
 
+    const creating = !group;
+    setBusy(creating ? "creating" : "updating");
     try {
-      if (group) {
-        // Update existing group
-        const res = await api(`/groups/${group.id}`, {
-          method: "PATCH",
-          body: JSON.stringify({ userId, name: groupName, sourceCalendars }),
-        });
-        setGroup(res.group);
-      } else {
-        // Create new group
-        const res = await api("/groups", {
-          method: "POST",
-          body: JSON.stringify({ userId, name: groupName, sourceCalendars }),
-        });
-        setGroup(res.group);
-      }
+      const res = creating
+        ? await api("/groups", {
+            method: "POST",
+            body: JSON.stringify({ userId, name: groupName, sourceCalendars }),
+          })
+        : await api(`/groups/${group.id}`, {
+            method: "PATCH",
+            body: JSON.stringify({ userId, name: groupName, sourceCalendars }),
+          });
+      setGroup(res.group);
+      setNotice(
+        res.group.status === "syncing"
+          ? { kind: "info", text: "Copying events. This can take a minute, and you can close this popup." }
+          : { kind: "success", text: "Saved." }
+      );
     } catch (err) {
-      setError(err.message);
+      if (err.body?.code === "GROUP_EXISTS") {
+        // Another click or another window already created it. Load that one.
+        setGroup(err.body.group);
+        setGroupName(err.body.group.name);
+        setSelections(selectionsFor(calendars, err.body.group));
+        setNotice({ kind: "info", text: "You already have a shared calendar, so it's loaded below." });
+      } else {
+        setNotice({ kind: "error", text: err.message });
+      }
+    } finally {
+      setBusy(null);
+      startCooldown();
+    }
+  }
+
+  // "Sync now" / "Retry": re-check every included calendar in the background.
+  async function handleSyncNow() {
+    if (!group || locked) return;
+    setBusy("syncing");
+    setNotice(null);
+    try {
+      const res = await api(`/groups/${group.id}/sync`, {
+        method: "POST",
+        body: JSON.stringify({ userId, wait: false }),
+      });
+      setGroup(res.group); // status "syncing" starts the progress poll
+    } catch (err) {
+      setNotice({ kind: "error", text: err.message });
+    } finally {
+      setBusy(null);
+      startCooldown();
+    }
+  }
+
+  async function handleDelete() {
+    if (!group || busy) return;
+    if (!confirmDelete) {
+      setConfirmDelete(true);
+      setTimeout(() => setConfirmDelete(false), 4000);
+      return;
+    }
+
+    setConfirmDelete(false);
+    setBusy("deleting");
+    setNotice(null);
+    try {
+      await api(`/groups/${group.id}?userId=${userId}`, { method: "DELETE" });
+      setGroup(null);
+      setNotice({
+        kind: "success",
+        text: "Shared calendar deleted. Anyone you shared it with no longer sees it.",
+      });
+      await load();
+    } catch (err) {
+      setNotice({ kind: "error", text: err.message });
+    } finally {
+      setBusy(null);
+      startCooldown();
     }
   }
 
   async function handleShare() {
-    if (!shareEmail || !group) return;
+    if (!shareEmail || !group || sharing) return;
     setSharing(true);
-    setError(null);
-
+    setNotice(null);
     try {
       const res = await api("/share", {
         method: "POST",
@@ -395,8 +531,9 @@ export default function App() {
       });
       setGroup((prev) => ({ ...prev, sharedWith: res.sharedWith }));
       setShareEmail("");
+      setNotice({ kind: "success", text: `Shared with ${shareEmail}.` });
     } catch (err) {
-      setError(err.message);
+      setNotice({ kind: "error", text: err.message });
     } finally {
       setSharing(false);
     }
@@ -410,7 +547,7 @@ export default function App() {
       });
       setGroup((prev) => ({ ...prev, sharedWith: res.sharedWith }));
     } catch (err) {
-      setError(err.message);
+      setNotice({ kind: "error", text: err.message });
     }
   }
 
@@ -425,9 +562,7 @@ export default function App() {
           <span style={styles.headerTitle}>Calendar Grouper</span>
         </div>
         <div style={styles.loginContainer}>
-          <p style={styles.loginText}>
-            Sign in with Google to group and share your calendars.
-          </p>
+          <p style={styles.loginText}>Sign in with Google to group and share your calendars.</p>
           <button style={styles.btnPrimary} onClick={handleLogin}>
             Sign in with Google
           </button>
@@ -437,7 +572,13 @@ export default function App() {
   }
 
   // ------ Render: main UI ------
-  const checkedCount = Object.values(selections).filter((s) => s.checked).length;
+  const saveLabel =
+    busy === "creating" ? "Creating…" :
+    busy === "updating" ? "Saving…" :
+    syncing ? "Syncing…" :
+    group ? "Update" : "Create";
+
+  const includedCount = group?.sourceCalendars?.length || 0;
 
   return (
     <div style={styles.container}>
@@ -445,12 +586,16 @@ export default function App() {
       <div style={styles.header}>
         <div style={styles.headerIcon}>G</div>
         <span style={styles.headerTitle}>Calendar Grouper</span>
-        <button style={styles.btnText} onClick={handleSave}>
-          {group ? "Update" : "Create"}
+        <button
+          style={{ ...styles.btnText, opacity: locked ? 0.45 : 1, cursor: locked ? "default" : "pointer" }}
+          onClick={handleSave}
+          disabled={locked}
+        >
+          {saveLabel}
         </button>
       </div>
 
-      {error && <div style={styles.error}>{error}</div>}
+      {notice && <div style={styles.notice(notice.kind)}>{notice.text}</div>}
 
       {/* Group name */}
       <div style={styles.section}>
@@ -460,11 +605,12 @@ export default function App() {
           value={groupName}
           onChange={(e) => setGroupName(e.target.value)}
           placeholder="My full schedule"
+          disabled={locked}
         />
       </div>
 
       {/* Calendar list */}
-      <div style={{ ...styles.section, paddingTop: 0 }}>
+      <div style={{ ...styles.section, paddingTop: 0, opacity: locked ? 0.6 : 1 }}>
         <div style={styles.sectionLabel}>My calendars</div>
         {calendars.map((cal) => {
           const sel = selections[cal.id] || { checked: false, detailLevel: "full" };
@@ -479,20 +625,23 @@ export default function App() {
                 type="checkbox"
                 checked={sel.checked}
                 onChange={() => toggleCalendar(cal.id)}
+                disabled={locked}
                 style={styles.checkbox(cal.backgroundColor)}
               />
               <div
                 style={styles.detailDot(sel.detailLevel)}
-                title={sel.detailLevel === "busy" ? "Busy only — click for full details" : "Full details — click for busy only"}
+                title={
+                  sel.detailLevel === "busy"
+                    ? "Busy only — click for full details"
+                    : "Full details — click for busy only"
+                }
                 onClick={(e) => {
                   e.stopPropagation();
                   toggleDetailLevel(cal.id);
                 }}
               />
               <span style={styles.calName}>{cal.summary}</span>
-              {sel.detailLevel === "busy" && (
-                <span style={styles.busyBadge}>busy</span>
-              )}
+              {sel.detailLevel === "busy" && <span style={styles.busyBadge}>busy</span>}
             </div>
           );
         })}
@@ -509,9 +658,7 @@ export default function App() {
         <div style={styles.legendRow}>
           <span style={styles.legendDot("#ea4335")} />
           <span>Busy only</span>
-          <span style={{ fontSize: 10, color: "#9aa0a6", marginLeft: 4 }}>
-            tap dot to toggle
-          </span>
+          <span style={{ fontSize: 10, color: "#9aa0a6", marginLeft: 4 }}>tap dot to toggle</span>
         </div>
       </div>
 
@@ -533,19 +680,14 @@ export default function App() {
               onClick={handleShare}
               disabled={sharing}
             >
-              Share
+              {sharing ? "Sharing…" : "Share"}
             </button>
           </div>
 
-          {/* Shared-with chips */}
           {group.sharedWith?.map((addr) => (
             <div key={addr} style={styles.shareChip}>
               <span style={styles.shareChipEmail}>{addr}</span>
-              <button
-                style={styles.removeBtn}
-                onClick={() => handleUnshare(addr)}
-                title="Remove"
-              >
+              <button style={styles.removeBtn} onClick={() => handleUnshare(addr)} title="Remove">
                 ✕
               </button>
             </div>
@@ -555,16 +697,61 @@ export default function App() {
 
       {/* Sync status */}
       {group && (
-        <div style={styles.status}>
-          <span>✓</span>
-          <span>
-            Syncing {checkedCount} calendar{checkedCount !== 1 ? "s" : ""} → "{group.name}"
-          </span>
+        <div style={styles.statusLine(group.status)}>
+          {group.status === "syncing" && <span>● Copying events into "{group.name}"…</span>}
+          {group.status === "error" && (
+            <>
+              <span style={{ flex: 1 }} title={group.lastError || ""}>
+                ✕ Last sync failed
+              </span>
+              <button
+                style={{ ...styles.btnText, padding: "2px 6px", opacity: locked ? 0.45 : 1 }}
+                onClick={handleSyncNow}
+                disabled={locked}
+              >
+                Retry
+              </button>
+            </>
+          )}
+          {(group.status === "ready" || !group.status) && (
+            <span>
+              ✓ Sharing {includedCount} calendar{includedCount !== 1 ? "s" : ""} → "{group.name}"
+            </span>
+          )}
         </div>
       )}
-      {group?.lastSyncedAt && (
-        <div style={styles.statusSub}>
-          Last synced {new Date(group.lastSyncedAt).toLocaleTimeString()} · live sync via webhooks
+      {group && group.status !== "syncing" && (
+        <div style={{ ...styles.statusSub, paddingTop: 2, display: "flex", alignItems: "center", gap: 6 }}>
+          <span>
+            {group.lastSyncedAt
+              ? `Last checked ${new Date(group.lastSyncedAt).toLocaleTimeString()} · new events appear within a couple of minutes`
+              : "New events appear within a couple of minutes"}
+          </span>
+          {group.status !== "error" && (
+            <button
+              style={{ ...styles.btnText, padding: 0, fontSize: 11, opacity: locked ? 0.45 : 1 }}
+              onClick={handleSyncNow}
+              disabled={locked}
+            >
+              {busy === "syncing" ? "Starting…" : "Sync now"}
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Delete */}
+      {group && (
+        <div style={styles.footer}>
+          <span style={{ fontSize: 11, color: "#9aa0a6" }}>
+            {confirmDelete ? "Removes it for everyone you shared with." : ""}
+          </span>
+          <button
+            style={{ ...styles.btnDanger(confirmDelete), opacity: busy ? 0.5 : 1 }}
+            onClick={handleDelete}
+            disabled={!!busy}
+          >
+            {busy === "deleting" ? "Deleting…" : confirmDelete ? "Click again to delete" : "Delete shared calendar"}
+          </button>
         </div>
       )}
     </div>

@@ -2,7 +2,8 @@ const express = require("express");
 const router = express.Router();
 const { getWatchChannel } = require("../models/firestore");
 const { syncSourceCalendar } = require("../services/calendarSync");
-const { getGroup } = require("../models/firestore");
+const { getGroup, updateGroup } = require("../models/firestore");
+const locks = require("../services/syncLocks");
 
 // ---------------------------------------------------------------------------
 // POST /webhooks/calendar
@@ -20,9 +21,8 @@ const { getGroup } = require("../models/firestore");
 //   X-Goog-Message-Number: sequential counter
 // ---------------------------------------------------------------------------
 
-// Track in-flight syncs to avoid duplicate work when Google sends multiple
-// notifications in quick succession for the same calendar.
-const activeSyncs = new Set();
+// Google often sends several notifications in a burst. If a sync is already
+// running on this group we skip: the auto-sync timer catches anything missed.
 
 router.post("/calendar", async (req, res) => {
   const channelId = req.headers["x-goog-channel-id"];
@@ -51,16 +51,9 @@ router.post("/calendar", async (req, res) => {
 
     const { userId, groupId, sourceCalendarId } = channel;
 
-    // Deduplicate: if we're already syncing this exact calendar, skip
-    const syncKey = `${userId}:${groupId}:${sourceCalendarId}`;
-    if (activeSyncs.has(syncKey)) {
-      console.log(`Sync already in progress for ${syncKey}, skipping`);
-      return;
-    }
+    if (locks.isBusy(groupId)) return;
 
-    activeSyncs.add(syncKey);
-
-    try {
+    await locks.runExclusive(groupId, "background", async () => {
       // Get the group to find the merged calendar ID and detail level
       const group = await getGroup(userId, groupId);
       if (!group || !group.mergedCalendarId) {
@@ -74,7 +67,6 @@ router.post("/calendar", async (req, res) => {
         return;
       }
 
-      console.log(`Webhook fired: syncing ${sourceCalendarId} for user ${userId}`);
       await syncSourceCalendar(
         userId,
         groupId,
@@ -82,10 +74,10 @@ router.post("/calendar", async (req, res) => {
         group.mergedCalendarId,
         calConfig.detailLevel || "full"
       );
-    } finally {
-      activeSyncs.delete(syncKey);
-    }
+      await updateGroup(userId, groupId, { lastSyncedAt: new Date().toISOString() });
+    });
   } catch (err) {
+    if (err.code === "SYNC_IN_PROGRESS") return;
     console.error(`Webhook sync error for channel ${channelId}:`, err);
   }
 });

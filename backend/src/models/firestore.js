@@ -60,6 +60,9 @@ async function createGroup(userId, group) {
     sourceCalendars: group.sourceCalendars || [],
     // sourceCalendars: [{ id, summary, detailLevel: "full" | "busy" }]
     sharedWith: group.sharedWith || [],
+    // "syncing" while events are being copied, then "ready" or "error"
+    status: group.status || "ready",
+    lastError: null,
     lastSyncedAt: null,
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
   };
@@ -96,28 +99,42 @@ async function listGroups(userId) {
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 }
 
+/** Every group for every user (used by the auto-sync timer). */
+async function listAllGroups() {
+  const snap = await getDb().collectionGroup("groups").get();
+  return snap.docs.map((d) => ({
+    id: d.id,
+    userId: d.ref.parent.parent.id, // users/{userId}/groups/{groupId}
+    ...d.data(),
+  }));
+}
+
 async function deleteGroup(userId, groupId) {
-  // Delete event mappings subcollection first
-  const mappings = await getDb()
+  const groupRef = getDb()
     .collection("users")
     .doc(userId)
     .collection("groups")
-    .doc(groupId)
-    .collection("eventMappings")
-    .get();
+    .doc(groupId);
 
-  const batch = getDb().batch();
-  mappings.docs.forEach((doc) => batch.delete(doc.ref));
-  batch.delete(
-    getDb().collection("users").doc(userId).collection("groups").doc(groupId)
-  );
-  await batch.commit();
+  // A Firestore batch holds at most 500 writes, and a group can have
+  // thousands of event mappings, so delete them in chunks.
+  const mappings = await groupRef.collection("eventMappings").get();
+  const docs = mappings.docs;
+  for (let i = 0; i < docs.length; i += 400) {
+    const batch = getDb().batch();
+    docs.slice(i, i + 400).forEach((doc) => batch.delete(doc.ref));
+    await batch.commit();
+  }
+
+  await groupRef.delete();
 }
 
 // ---------------------------------------------------------------------------
 // Event Mappings
 //
-// Each document: { sourceCalendarId, sourceEventId, mergedEventId }
+// Each document: { sourceCalendarId, sourceEventId, mergedEventId, sourceUpdated }
+// sourceUpdated is the source event's "updated" timestamp when we last copied
+// it, so unchanged events can be skipped instead of rewritten.
 // Doc ID = `${sourceCalendarId}_${sourceEventId}` (deterministic so upserts
 // are simple).
 // ---------------------------------------------------------------------------
@@ -128,7 +145,14 @@ function mappingDocId(sourceCalendarId, sourceEventId) {
   return `${sourceCalendarId}::${sourceEventId}`;
 }
 
-async function saveEventMapping(userId, groupId, sourceCalendarId, sourceEventId, mergedEventId) {
+async function saveEventMapping(
+  userId,
+  groupId,
+  sourceCalendarId,
+  sourceEventId,
+  mergedEventId,
+  extra = {}
+) {
   const docId = mappingDocId(sourceCalendarId, sourceEventId);
   await getDb()
     .collection("users")
@@ -137,7 +161,7 @@ async function saveEventMapping(userId, groupId, sourceCalendarId, sourceEventId
     .doc(groupId)
     .collection("eventMappings")
     .doc(docId)
-    .set({ sourceCalendarId, sourceEventId, mergedEventId });
+    .set({ sourceCalendarId, sourceEventId, mergedEventId, ...extra });
 }
 
 async function getEventMapping(userId, groupId, sourceCalendarId, sourceEventId) {
@@ -221,6 +245,7 @@ module.exports = {
   getGroup,
   updateGroup,
   listGroups,
+  listAllGroups,
   deleteGroup,
   // event mappings
   saveEventMapping,
