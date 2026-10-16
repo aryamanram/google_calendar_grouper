@@ -2,6 +2,24 @@ const express = require("express");
 const router = express.Router();
 const { createOAuth2Client } = require("../services/googleApi");
 const { saveUserTokens } = require("../models/firestore");
+const { requireApiKey } = require("../middleware/auth");
+const { IS_CLOUD } = require("../runMode");
+
+// Comma-separated allow-list, e.g. "you@gmail.com". When set, nobody else can
+// sign in and store their tokens in your database. Required in cloud mode
+// (index.js refuses to start without it); optional locally.
+function allowedEmails() {
+  return (process.env.ALLOWED_EMAILS || "")
+    .split(",")
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function isAllowedEmail(email) {
+  const list = allowedEmails();
+  if (list.length === 0) return !IS_CLOUD; // never open sign-in to everyone in the cloud
+  return list.includes(String(email || "").toLowerCase());
+}
 
 // The scopes we need:
 // - calendar: full read/write to create merged calendars, insert events, manage ACLs
@@ -59,6 +77,11 @@ router.get("/callback", async (req, res) => {
 
     const userId = profile.id; // stable numeric Google ID
 
+    if (!isAllowedEmail(profile.email)) {
+      console.warn(`Sign-in refused for ${profile.email} (not in ALLOWED_EMAILS)`);
+      return res.status(403).send("This account isn't allowed to use this Calendar Grouper backend.");
+    }
+
     await saveUserTokens(userId, tokens);
     require("../services/googleApi").forgetAuthClient(userId); // use the new tokens
 
@@ -78,8 +101,8 @@ router.get("/callback", async (req, res) => {
             const bc = new BroadcastChannel("calendar-grouper-auth");
             bc.postMessage({
               type: "AUTH_SUCCESS",
-              userId: "${userId}",
-              email: "${profile.email}",
+              userId: ${JSON.stringify(userId)},
+              email: ${JSON.stringify(profile.email)},
             });
             bc.close();
           } catch (e) {
@@ -101,7 +124,7 @@ router.get("/callback", async (req, res) => {
 //
 // Returns the user's calendar list so the popup can show checkboxes.
 // ---------------------------------------------------------------------------
-router.get("/calendars", async (req, res) => {
+router.get("/calendars", requireApiKey, async (req, res) => {
   const { userId } = req.query;
   if (!userId) return res.status(400).json({ error: "Missing userId" });
 
@@ -131,3 +154,4 @@ router.get("/calendars", async (req, res) => {
 });
 
 module.exports = router;
+module.exports.allowedEmails = allowedEmails;

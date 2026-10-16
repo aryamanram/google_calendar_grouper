@@ -20,18 +20,22 @@ const INTERVAL_SECONDS = Math.max(30, Number(process.env.SYNC_POLL_SECONDS) || 1
 
 let running = false;
 
+/** One pass over every group. Returns a small summary (used by /internal/tick). */
 async function pollOnce() {
-  if (running) return; // previous pass still going
+  if (running) return { skipped: true, reason: "previous pass still running" };
   running = true;
+  const summary = { groups: 0, changes: 0, errors: 0 };
   try {
     const groups = await db.listAllGroups();
     for (const g of groups) {
       if (locks.isBusy(g.id)) continue; // a create/update/webhook is already on it
+      summary.groups++;
 
       try {
         await locks.runExclusive(g.id, "background", async () => {
           const results = await syncGroup(g.userId, g.id);
           const changes = results.reduce((n, r) => n + r.inserted + r.updated + r.deleted, 0);
+          summary.changes += changes;
           if (changes) console.log(`Auto-sync "${g.name}": ${changes} change(s) applied`);
 
           // Heal a group left in "syncing" by a restart, or recover from an error.
@@ -41,6 +45,7 @@ async function pollOnce() {
         });
       } catch (err) {
         if (err.code === "SYNC_IN_PROGRESS") continue;
+        summary.errors++;
         console.error(`Auto-sync failed for "${g.name}": ${err.message}`);
         await db
           .updateGroup(g.userId, g.id, { status: "error", lastError: err.message })
@@ -49,14 +54,17 @@ async function pollOnce() {
     }
   } catch (err) {
     console.error("Auto-sync pass failed:", err.message);
+    throw err;
   } finally {
     running = false;
   }
+  return summary;
 }
 
 function startAutoSync() {
-  setTimeout(pollOnce, 5000); // first pass shortly after startup
-  setInterval(pollOnce, INTERVAL_SECONDS * 1000);
+  const pass = () => pollOnce().catch(() => {}); // already logged
+  setTimeout(pass, 5000); // first pass shortly after startup
+  setInterval(pass, INTERVAL_SECONDS * 1000);
   console.log(`Auto-sync started (checks every ${INTERVAL_SECONDS}s)`);
 }
 

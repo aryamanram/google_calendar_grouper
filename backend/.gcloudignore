@@ -1,0 +1,14 @@
+# Files never uploaded when deploying with `gcloud run deploy --source`.
+# Secrets come from Secret Manager, never from files.
+.gcloudignore
+.git
+.gitignore
+node_modules/
+.env
+.env.*
+!.env.example
+service-account-key.json
+*.key
+*.pem
+client_secret*.json
+npm-debug.log

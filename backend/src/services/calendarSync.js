@@ -15,6 +15,11 @@ function cancelGroup(groupId) {
   setTimeout(() => cancelledGroups.delete(groupId), 10 * 60 * 1000).unref();
 }
 
+/** Undo cancelGroup (used when a delete turns out not to be possible). */
+function uncancelGroup(groupId) {
+  cancelledGroups.delete(groupId);
+}
+
 function assertNotCancelled(groupId) {
   if (cancelledGroups.has(groupId)) {
     throw new Error("Shared calendar was deleted; stopping sync");
@@ -305,6 +310,7 @@ async function purgeSourceCalendar(userId, groupId, sourceCalendarId, mergedCale
 
 module.exports = {
   cancelGroup,
+  uncancelGroup,
   syncSourceCalendar,
   syncGroup,
   purgeSourceCalendar,

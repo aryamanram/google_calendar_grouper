@@ -1,0 +1,13 @@
+# Files kept out of the Docker build context (same list as .gcloudignore).
+.gcloudignore
+.git
+.gitignore
+node_modules/
+.env
+.env.*
+!.env.example
+service-account-key.json
+*.key
+*.pem
+client_secret*.json
+npm-debug.log

@@ -312,7 +312,13 @@ The automatic handoff from sign-in to the extension isn't built yet, so you'll s
 
 ## Heads-up: the 7-day token limit
 
-While the app is in **Testing** mode, Google expires refresh tokens after about 7 days. If sync suddenly stops working a week from now, that's the cause, not a code bug. Re-run Phase 5 to sign in again, or we can publish the app later to remove the limit.
+While the app is in **Testing** mode, Google expires refresh tokens after about 7 days. If sync suddenly stops working a week from now, that's the cause, not a code bug. Re-run Phase 5 to sign in again. Publishing the app (part of [DEPLOY.md](DEPLOY.md), step 3) removes the limit.
+
+---
+
+## Next: run it with your computer off
+
+Everything above runs on your laptop. To keep syncing while it's off, follow **[DEPLOY.md](DEPLOY.md)**. It moves the backend to Cloud Run with a 2-minute Cloud Scheduler check, and fits in Google Cloud's free tier.
 
 ---
 
