@@ -13,21 +13,28 @@ const {
   stopWatchesForGroup,
   stopWatchForCalendar,
 } = require("../services/watchManager");
+const locks = require("../services/syncLocks");
 
 // ---------------------------------------------------------------------------
 // Guards against double-clicks and overlapping work
 //
 // creatingUsers: a user with a Create request in flight. A second Create
 //   while the first is running gets 409 instead of making another calendar.
-// busyGroups: a group whose events are being copied right now. Updates and
-//   manual syncs wait until it finishes.
+// Per-group syncs (create, update, sync now, auto-sync, webhooks) all go
+//   through services/syncLocks.js so only one touches a calendar at a time.
 //
 // These live in memory, which is correct for a single server process. If
-// this ever runs as several Cloud Run instances, move the lock into a
-// Firestore transaction.
+// this ever runs as several Cloud Run instances, move the locks into
+// Firestore transactions.
 // ---------------------------------------------------------------------------
 const creatingUsers = new Set();
-const busyGroups = new Set();
+
+function busyResponse(res, kind) {
+  return res.status(409).json({
+    error: new locks.GroupBusyError(kind).message,
+    code: "SYNC_IN_PROGRESS",
+  });
+}
 
 // MVP: one shared calendar per user. Raise this when multiple groups land.
 const MAX_GROUPS_PER_USER = 1;
@@ -55,29 +62,47 @@ function cleanSources(list) {
 }
 
 /**
- * Run slow calendar work in the background and record its progress on the
- * group document so the popup can show "Copying events…" and then the result.
- * Starts synchronously (busyGroups is set before the first await), so callers
- * can fire it and respond to the HTTP request straight away.
+ * Do slow calendar work while recording progress on the group document, so
+ * the popup can show "Copying events…" and then the result. Never throws:
+ * failures are saved as status "error" with the message in lastError.
+ * Returns true on success.
+ */
+async function trackStatus(userId, groupId, label, job) {
+  try {
+    await db.updateGroup(userId, groupId, { status: "syncing", lastError: null });
+    await job();
+    await db.updateGroup(userId, groupId, {
+      status: "ready",
+      lastError: null,
+      lastSyncedAt: new Date().toISOString(),
+    });
+    console.log(`${label} finished for group ${groupId}`);
+    return true;
+  } catch (err) {
+    console.error(`${label} failed for group ${groupId}: ${err.message}`);
+    // The group may have been deleted mid-job; ignore that failure.
+    await db
+      .updateGroup(userId, groupId, { status: "error", lastError: err.message })
+      .catch(() => {});
+    return false;
+  }
+}
+
+/**
+ * Run tracked work in the background while holding the group's sync lock.
+ * Claims the lock synchronously, so callers can respond to the HTTP request
+ * right away. Callers check the lock is free first.
  */
 function runGroupJob(userId, groupId, label, job) {
-  busyGroups.add(groupId);
-  (async () => {
-    try {
-      await db.updateGroup(userId, groupId, { status: "syncing", lastError: null });
-      await job();
-      await db.updateGroup(userId, groupId, { status: "ready", lastError: null });
-      console.log(`${label} finished for group ${groupId}`);
-    } catch (err) {
-      console.error(`${label} failed for group ${groupId}: ${err.message}`);
-      // The group may have been deleted mid-job; ignore that failure.
-      await db
-        .updateGroup(userId, groupId, { status: "error", lastError: err.message })
-        .catch(() => {});
-    } finally {
-      busyGroups.delete(groupId);
-    }
-  })();
+  locks
+    .runExclusive(groupId, "job", () => trackStatus(userId, groupId, label, job))
+    .catch((err) => console.error(`${label} could not start: ${err.message}`));
+}
+
+/** Stop any sync on this group and wait for it to finish winding down. */
+async function stopSyncs(groupId) {
+  cancelGroup(groupId);
+  await locks.waitForIdle(groupId);
 }
 
 // ---------------------------------------------------------------------------
@@ -206,7 +231,7 @@ router.post("/cleanup", async (req, res) => {
     }
 
     for (const g of groups) {
-      cancelGroup(g.id);
+      await stopSyncs(g.id);
       await stopWatchesForGroup(userId, g.id);
       await deleteCalendarIfExists(userId, g.mergedCalendarId);
       await db.deleteGroup(userId, g.id);
@@ -256,60 +281,61 @@ router.patch("/:groupId", async (req, res) => {
   const { groupId } = req.params;
   if (!userId) return res.status(400).json({ error: "Missing userId" });
 
-  if (busyGroups.has(groupId)) {
-    return res.status(409).json({
-      error: "Still copying events from the last change. Try again when it finishes.",
-      code: "SYNC_IN_PROGRESS",
-    });
-  }
+  // A routine auto-sync check takes a second or two: wait for it. A
+  // user-started job (create, update, sync now) gets a 409 instead.
+  const busyKind = await locks.waitForBackground(groupId);
+  if (busyKind) return busyResponse(res, busyKind);
 
   try {
-    const existing = await db.getGroup(userId, groupId);
-    if (!existing) return res.status(404).json({ error: "Group not found" });
+    // Hold the lock from reading the config to the end of the event work, so
+    // an auto-sync can't overwrite the new settings with stale ones.
+    await locks.runExclusive(groupId, "job", async () => {
+      const existing = await db.getGroup(userId, groupId);
+      if (!existing) return res.status(404).json({ error: "Group not found" });
 
-    const updates = {};
+      const updates = {};
 
-    const newName = name?.trim();
-    if (newName && newName !== existing.name) {
-      await googleApi.renameCalendar(userId, existing.mergedCalendarId, newName);
-      updates.name = newName;
-    }
-
-    let removed = [];
-    let added = [];
-    let changed = [];
-
-    if (sourceCalendars) {
-      if (sourceCalendars.length === 0) {
-        return res.status(400).json({ error: "Select at least one calendar" });
+      const newName = name?.trim();
+      if (newName && newName !== existing.name) {
+        await googleApi.renameCalendar(userId, existing.mergedCalendarId, newName);
+        updates.name = newName;
       }
-      const next = cleanSources(sourceCalendars);
-      const prevById = new Map(existing.sourceCalendars.map((c) => [c.id, c]));
-      const nextIds = new Set(next.map((c) => c.id));
 
-      removed = existing.sourceCalendars.filter((c) => !nextIds.has(c.id));
-      added = next.filter((c) => !prevById.has(c.id));
-      changed = next.filter(
-        (c) => prevById.has(c.id) && (prevById.get(c.id).detailLevel || "full") !== c.detailLevel
-      );
-      const changedIds = new Set(changed.map((c) => c.id));
+      let removed = [];
+      let added = [];
+      let changed = [];
 
-      updates.sourceCalendars = next.map((c) => ({
-        ...c,
-        // A detail-level change rebuilds that calendar, so drop its sync token.
-        syncToken: changedIds.has(c.id) ? null : prevById.get(c.id)?.syncToken || null,
-      }));
-    }
+      if (sourceCalendars) {
+        if (sourceCalendars.length === 0) {
+          return res.status(400).json({ error: "Select at least one calendar" });
+        }
+        const next = cleanSources(sourceCalendars);
+        const prevById = new Map(existing.sourceCalendars.map((c) => [c.id, c]));
+        const nextIds = new Set(next.map((c) => c.id));
 
-    const needsJob = removed.length + added.length + changed.length > 0;
-    if (needsJob) updates.status = "syncing";
-    if (Object.keys(updates).length) await db.updateGroup(userId, groupId, updates);
+        removed = existing.sourceCalendars.filter((c) => !nextIds.has(c.id));
+        added = next.filter((c) => !prevById.has(c.id));
+        changed = next.filter(
+          (c) => prevById.has(c.id) && (prevById.get(c.id).detailLevel || "full") !== c.detailLevel
+        );
+        const changedIds = new Set(changed.map((c) => c.id));
 
-    res.json({ group: await db.getGroup(userId, groupId) });
+        updates.sourceCalendars = next.map((c) => ({
+          ...c,
+          // A detail-level change rebuilds that calendar, so drop its sync token.
+          syncToken: changedIds.has(c.id) ? null : prevById.get(c.id)?.syncToken || null,
+        }));
+      }
 
-    if (needsJob) {
+      const needsJob = removed.length + added.length + changed.length > 0;
+      if (needsJob) updates.status = "syncing";
+      if (Object.keys(updates).length) await db.updateGroup(userId, groupId, updates);
+
+      res.json({ group: await db.getGroup(userId, groupId) });
+      if (!needsJob) return;
+
       const mergedId = existing.mergedCalendarId;
-      runGroupJob(userId, groupId, "Update", async () => {
+      await trackStatus(userId, groupId, "Update", async () => {
         for (const c of removed) {
           await stopWatchForCalendar(userId, groupId, c.id);
           await purgeSourceCalendar(userId, groupId, c.id, mergedId);
@@ -325,10 +351,12 @@ router.patch("/:groupId", async (req, res) => {
           await syncSourceCalendar(userId, groupId, c.id, mergedId, c.detailLevel);
         }
       });
-    }
+    });
   } catch (err) {
+    if (res.headersSent) return;
+    if (err.code === "SYNC_IN_PROGRESS") return busyResponse(res, err.kind);
     console.error("Failed to update group:", err.message);
-    if (!res.headersSent) res.status(500).json({ error: err.message });
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -347,7 +375,9 @@ router.delete("/:groupId", async (req, res) => {
     const group = await db.getGroup(userId, groupId);
     if (!group) return res.status(404).json({ error: "Group not found" });
 
-    cancelGroup(groupId);
+    // Stop any running sync and wait for it, so nothing writes event
+    // mappings after the group is gone.
+    await stopSyncs(groupId);
     await stopWatchesForGroup(userId, groupId);
     await deleteCalendarIfExists(userId, group.mergedCalendarId);
     await db.deleteGroup(userId, groupId);
@@ -363,31 +393,47 @@ router.delete("/:groupId", async (req, res) => {
 // ---------------------------------------------------------------------------
 // POST /groups/:groupId/sync
 //
-// Manual "sync now". Waits for the sync and returns per-calendar counts,
-// which makes it handy for testing from curl while webhooks are off.
+// "Sync now". Body: { userId, wait?: true }
+//   wait: true (default)  waits and returns per-calendar counts. Handy from curl.
+//   wait: false           starts it in the background and returns 202 with the
+//                         group (status "syncing"). Used by the popup's Retry.
 // ---------------------------------------------------------------------------
 router.post("/:groupId/sync", async (req, res) => {
-  const { userId } = req.body;
+  const { userId, wait = true } = req.body;
   const { groupId } = req.params;
   if (!userId) return res.status(400).json({ error: "Missing userId" });
 
-  if (busyGroups.has(groupId)) {
-    return res.status(409).json({
-      error: "A sync is already running for this calendar.",
-      code: "SYNC_IN_PROGRESS",
-    });
-  }
+  const busyKind = await locks.waitForBackground(groupId);
+  if (busyKind) return busyResponse(res, busyKind);
 
-  busyGroups.add(groupId);
   try {
-    const results = await syncGroup(userId, groupId);
-    await db.updateGroup(userId, groupId, { status: "ready", lastError: null });
+    const group = await db.getGroup(userId, groupId);
+    if (!group) return res.status(404).json({ error: "Group not found" });
+
+    if (!wait) {
+      await db.updateGroup(userId, groupId, { status: "syncing", lastError: null });
+      runGroupJob(userId, groupId, "Sync now", () => syncGroup(userId, groupId));
+      return res.status(202).json({ group: { ...group, status: "syncing", lastError: null } });
+    }
+
+    let results;
+    const ok = await locks.runExclusive(groupId, "job", () =>
+      trackStatus(userId, groupId, "Sync now", async () => {
+        results = await syncGroup(userId, groupId);
+      })
+    );
+    if (!ok) {
+      const after = await db.getGroup(userId, groupId);
+      return res.status(500).json({ error: after?.lastError || "Sync failed" });
+    }
     res.json({ results });
   } catch (err) {
+    if (err.code === "SYNC_IN_PROGRESS") return busyResponse(res, err.kind);
     console.error("Manual sync failed:", err.message);
-    res.status(500).json({ error: err.message });
-  } finally {
-    busyGroups.delete(groupId);
+    await db
+      .updateGroup(userId, groupId, { status: "error", lastError: err.message })
+      .catch(() => {});
+    if (!res.headersSent) res.status(500).json({ error: err.message });
   }
 });
 

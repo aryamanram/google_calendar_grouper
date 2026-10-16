@@ -60,6 +60,7 @@ router.get("/callback", async (req, res) => {
     const userId = profile.id; // stable numeric Google ID
 
     await saveUserTokens(userId, tokens);
+    require("../services/googleApi").forgetAuthClient(userId); // use the new tokens
 
     // Send a simple HTML page that posts a message back to the extension
     // so the popup knows auth succeeded.

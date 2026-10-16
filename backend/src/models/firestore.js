@@ -99,6 +99,16 @@ async function listGroups(userId) {
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 }
 
+/** Every group for every user (used by the auto-sync timer). */
+async function listAllGroups() {
+  const snap = await getDb().collectionGroup("groups").get();
+  return snap.docs.map((d) => ({
+    id: d.id,
+    userId: d.ref.parent.parent.id, // users/{userId}/groups/{groupId}
+    ...d.data(),
+  }));
+}
+
 async function deleteGroup(userId, groupId) {
   const groupRef = getDb()
     .collection("users")
@@ -122,7 +132,9 @@ async function deleteGroup(userId, groupId) {
 // ---------------------------------------------------------------------------
 // Event Mappings
 //
-// Each document: { sourceCalendarId, sourceEventId, mergedEventId }
+// Each document: { sourceCalendarId, sourceEventId, mergedEventId, sourceUpdated }
+// sourceUpdated is the source event's "updated" timestamp when we last copied
+// it, so unchanged events can be skipped instead of rewritten.
 // Doc ID = `${sourceCalendarId}_${sourceEventId}` (deterministic so upserts
 // are simple).
 // ---------------------------------------------------------------------------
@@ -133,7 +145,14 @@ function mappingDocId(sourceCalendarId, sourceEventId) {
   return `${sourceCalendarId}::${sourceEventId}`;
 }
 
-async function saveEventMapping(userId, groupId, sourceCalendarId, sourceEventId, mergedEventId) {
+async function saveEventMapping(
+  userId,
+  groupId,
+  sourceCalendarId,
+  sourceEventId,
+  mergedEventId,
+  extra = {}
+) {
   const docId = mappingDocId(sourceCalendarId, sourceEventId);
   await getDb()
     .collection("users")
@@ -142,7 +161,7 @@ async function saveEventMapping(userId, groupId, sourceCalendarId, sourceEventId
     .doc(groupId)
     .collection("eventMappings")
     .doc(docId)
-    .set({ sourceCalendarId, sourceEventId, mergedEventId });
+    .set({ sourceCalendarId, sourceEventId, mergedEventId, ...extra });
 }
 
 async function getEventMapping(userId, groupId, sourceCalendarId, sourceEventId) {
@@ -226,6 +245,7 @@ module.exports = {
   getGroup,
   updateGroup,
   listGroups,
+  listAllGroups,
   deleteGroup,
   // event mappings
   saveEventMapping,

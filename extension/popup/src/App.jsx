@@ -290,7 +290,7 @@ export default function App() {
   // Local calendar selection state: { [calId]: { checked, detailLevel } }
   const [selections, setSelections] = useState({});
 
-  // What the popup is doing right now: null | "creating" | "updating" | "deleting"
+  // What the popup is doing right now: null | "creating" | "updating" | "syncing" | "deleting"
   const [busy, setBusy] = useState(null);
   const [coolingDown, setCoolingDown] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -363,12 +363,17 @@ export default function App() {
   }, [load]);
 
   // ------ Poll while events are being copied ------
+  // Paused during a delete. `alive` turns false when this effect is torn down
+  // (delete starts, group changes, popup closes), so a request that was
+  // already in flight can't bring a deleted group back.
   useEffect(() => {
-    if (!userId || !group?.id || group.status !== "syncing") return;
+    if (!userId || !group?.id || group.status !== "syncing" || busy === "deleting") return;
 
+    let alive = true;
     const timer = setInterval(async () => {
       try {
         const res = await api(`/groups/${group.id}?userId=${userId}`);
+        if (!alive) return;
         setGroup(res.group);
         if (res.group.status === "ready") {
           setNotice({ kind: "success", text: "All events copied. Your shared calendar is up to date." });
@@ -376,12 +381,15 @@ export default function App() {
           setNotice({ kind: "error", text: `Sync stopped: ${res.group.lastError}` });
         }
       } catch (err) {
-        if (err.status === 404) setGroup(null); // deleted elsewhere
+        if (alive && err.status === 404) setGroup(null); // deleted elsewhere
       }
     }, POLL_MS);
 
-    return () => clearInterval(timer);
-  }, [userId, group?.id, group?.status]);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, [userId, group?.id, group?.status, busy]);
 
   // ------ Handlers ------
   function handleLogin() {
@@ -454,11 +462,31 @@ export default function App() {
       if (err.body?.code === "GROUP_EXISTS") {
         // Another click or another window already created it. Load that one.
         setGroup(err.body.group);
+        setGroupName(err.body.group.name);
         setSelections(selectionsFor(calendars, err.body.group));
         setNotice({ kind: "info", text: "You already have a shared calendar, so it's loaded below." });
       } else {
         setNotice({ kind: "error", text: err.message });
       }
+    } finally {
+      setBusy(null);
+      startCooldown();
+    }
+  }
+
+  // "Sync now" / "Retry": re-check every included calendar in the background.
+  async function handleSyncNow() {
+    if (!group || locked) return;
+    setBusy("syncing");
+    setNotice(null);
+    try {
+      const res = await api(`/groups/${group.id}/sync`, {
+        method: "POST",
+        body: JSON.stringify({ userId, wait: false }),
+      });
+      setGroup(res.group); // status "syncing" starts the progress poll
+    } catch (err) {
+      setNotice({ kind: "error", text: err.message });
     } finally {
       setBusy(null);
       startCooldown();
@@ -671,17 +699,43 @@ export default function App() {
       {group && (
         <div style={styles.statusLine(group.status)}>
           {group.status === "syncing" && <span>● Copying events into "{group.name}"…</span>}
-          {group.status === "error" && <span>✕ Last sync failed. Click Update to retry.</span>}
+          {group.status === "error" && (
+            <>
+              <span style={{ flex: 1 }} title={group.lastError || ""}>
+                ✕ Last sync failed
+              </span>
+              <button
+                style={{ ...styles.btnText, padding: "2px 6px", opacity: locked ? 0.45 : 1 }}
+                onClick={handleSyncNow}
+                disabled={locked}
+              >
+                Retry
+              </button>
+            </>
+          )}
           {(group.status === "ready" || !group.status) && (
             <span>
-              ✓ Syncing {includedCount} calendar{includedCount !== 1 ? "s" : ""} → "{group.name}"
+              ✓ Sharing {includedCount} calendar{includedCount !== 1 ? "s" : ""} → "{group.name}"
             </span>
           )}
         </div>
       )}
-      {group?.lastSyncedAt && (
-        <div style={{ ...styles.statusSub, paddingTop: 2 }}>
-          Last synced {new Date(group.lastSyncedAt).toLocaleTimeString()}
+      {group && group.status !== "syncing" && (
+        <div style={{ ...styles.statusSub, paddingTop: 2, display: "flex", alignItems: "center", gap: 6 }}>
+          <span>
+            {group.lastSyncedAt
+              ? `Last checked ${new Date(group.lastSyncedAt).toLocaleTimeString()} · new events appear within a couple of minutes`
+              : "New events appear within a couple of minutes"}
+          </span>
+          {group.status !== "error" && (
+            <button
+              style={{ ...styles.btnText, padding: 0, fontSize: 11, opacity: locked ? 0.45 : 1 }}
+              onClick={handleSyncNow}
+              disabled={locked}
+            >
+              {busy === "syncing" ? "Starting…" : "Sync now"}
+            </button>
+          )}
         </div>
       )}
 

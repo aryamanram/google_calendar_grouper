@@ -13,11 +13,24 @@ function createOAuth2Client() {
   );
 }
 
+// Cache each user's client briefly so a sync doesn't re-read their tokens from
+// Firestore for every single API call.
+const authCache = new Map(); // userId -> { client, at }
+const AUTH_CACHE_MS = 10 * 60 * 1000;
+
+/** Drop a cached client (call after the user signs in again). */
+function forgetAuthClient(userId) {
+  authCache.delete(userId);
+}
+
 /**
  * Returns an authenticated OAuth2 client for a given user.
  * Automatically refreshes the access token if expired.
  */
 async function getAuthClient(userId) {
+  const hit = authCache.get(userId);
+  if (hit && Date.now() - hit.at < AUTH_CACHE_MS) return hit.client;
+
   const tokens = await getUserTokens(userId);
   if (!tokens) throw new Error(`No tokens found for user ${userId}`);
 
@@ -33,6 +46,7 @@ async function getAuthClient(userId) {
     });
   });
 
+  authCache.set(userId, { client, at: Date.now() });
   return client;
 }
 
@@ -58,13 +72,18 @@ function isManagedCalendar(cal) {
 // write events too quickly, and occasional 5xx errors. Those are temporary,
 // so we wait and try again: ~0.5s, 1s, 2s, 4s, 8s (+ random jitter).
 // Anything else (bad request, not found, daily quota) fails immediately.
+//
+// Inserts are the exception for 5xx: Google may have created the item before
+// the error, and retrying would create a duplicate. A rate-limit rejection
+// means nothing was created, so those are still retried.
 // ---------------------------------------------------------------------------
 const RETRYABLE_REASONS = new Set(["rateLimitExceeded", "userRateLimitExceeded"]);
 const MAX_ATTEMPTS = 6;
 
-function isRetryable(err) {
+function isRetryable(err, { idempotent = true } = {}) {
   const code = err.code || err.response?.status;
-  if (code === 429 || (code >= 500 && code < 600)) return true;
+  if (code === 429) return true;
+  if (code >= 500 && code < 600) return idempotent;
   if (code === 403) {
     const reason = err.errors?.[0]?.reason || err.response?.data?.error?.errors?.[0]?.reason;
     return RETRYABLE_REASONS.has(reason);
@@ -74,12 +93,12 @@ function isRetryable(err) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function withRetry(fn, label = "Google API call") {
+async function withRetry(fn, label = "Google API call", options = {}) {
   for (let attempt = 1; ; attempt++) {
     try {
       return await fn();
     } catch (err) {
-      if (attempt >= MAX_ATTEMPTS || !isRetryable(err)) throw err;
+      if (attempt >= MAX_ATTEMPTS || !isRetryable(err, options)) throw err;
       const delay = 500 * 2 ** (attempt - 1) + Math.floor(Math.random() * 250);
       console.warn(`${label} rate-limited (attempt ${attempt}), retrying in ${delay}ms`);
       await sleep(delay);
@@ -111,7 +130,8 @@ async function createCalendar(userId, summary) {
           description: `Shared view of my schedule. ${MANAGED_TAG}`,
         },
       }),
-    "calendars.insert"
+    "calendars.insert",
+    { idempotent: false }
   );
   return res.data; // { id, summary, ... }
 }
@@ -136,11 +156,14 @@ async function deleteCalendar(userId, calendarId) {
 /**
  * List events on a calendar.
  *
- * First sync (no syncToken): returns every event that *happens* between
- * 30 days ago and one year from now. Google also returns a nextSyncToken —
- * store it and pass it next time to get only what changed since.
+ * First sync (no syncToken): returns every event that ends after 30 days ago
+ * (recurring series included). Google also returns a nextSyncToken — store it
+ * and pass it next time to get only what changed since.
+ *
+ * Only timeMin is used, as in Google's own incremental-sync example; timeMin,
+ * timeMax and updatedMin can't be combined with a syncToken later anyway.
  */
-async function listEvents(userId, calendarId, { syncToken, updatedMin } = {}) {
+async function listEvents(userId, calendarId, { syncToken } = {}) {
   const auth = await getAuthClient(userId);
   const cal = getCalendarClient(auth);
 
@@ -153,9 +176,8 @@ async function listEvents(userId, calendarId, { syncToken, updatedMin } = {}) {
 
   if (syncToken) {
     params.syncToken = syncToken;
-  } else if (updatedMin) {
+  } else {
     params.timeMin = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(); // last 30 days
-    params.timeMax = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(); // next year
   }
 
   const allEvents = [];
@@ -173,13 +195,63 @@ async function listEvents(userId, calendarId, { syncToken, updatedMin } = {}) {
   return { events: allEvents, nextSyncToken };
 }
 
+/** Fetch one event by ID, or null if it doesn't exist. */
+async function getEvent(userId, calendarId, eventId) {
+  const auth = await getAuthClient(userId);
+  const cal = getCalendarClient(auth);
+  try {
+    const res = await withRetry(() => cal.events.get({ calendarId, eventId }), "events.get");
+    return res.data;
+  } catch (err) {
+    const code = err.code || err.response?.status;
+    if (code === 404 || code === 410) return null;
+    throw err;
+  }
+}
+
+/**
+ * Find one occurrence of a recurring event by its original start time.
+ * Used to edit or cancel a single occurrence of a series on the shared
+ * calendar. originalStart is an RFC3339 date-time, or YYYY-MM-DD for
+ * all-day events.
+ */
+async function findInstance(userId, calendarId, recurringEventId, originalStart) {
+  const auth = await getAuthClient(userId);
+  const cal = getCalendarClient(auth);
+  try {
+    const res = await withRetry(
+      () =>
+        cal.events.instances({
+          calendarId,
+          eventId: recurringEventId,
+          originalStart,
+          showDeleted: true,
+          maxResults: 1,
+        }),
+      "events.instances"
+    );
+    if (res.data.items?.length) return res.data.items[0];
+  } catch (err) {
+    const code = err.code || err.response?.status;
+    if (code !== 400 && code !== 404 && code !== 410) throw err;
+  }
+
+  // Fallback: Google names occurrences "<seriesId>_<start>", using
+  // YYYYMMDDTHHMMSSZ (UTC) for timed events and YYYYMMDD for all-day ones.
+  const suffix = /^\d{4}-\d{2}-\d{2}$/.test(originalStart)
+    ? originalStart.replace(/-/g, "")
+    : new Date(originalStart).toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
+  return getEvent(userId, calendarId, `${recurringEventId}_${suffix}`);
+}
+
 /** Insert an event into the merged calendar. */
 async function insertEvent(userId, calendarId, eventBody) {
   const auth = await getAuthClient(userId);
   const cal = getCalendarClient(auth);
   const res = await withRetry(
     () => cal.events.insert({ calendarId, requestBody: eventBody }),
-    "events.insert"
+    "events.insert",
+    { idempotent: false }
   );
   return res.data;
 }
@@ -277,8 +349,12 @@ module.exports = {
   MANAGED_TAG,
   isManagedCalendar,
   withRetry,
+  isRetryable,
   createOAuth2Client,
   getAuthClient,
+  forgetAuthClient,
+  getEvent,
+  findInstance,
   listCalendars,
   createCalendar,
   renameCalendar,
