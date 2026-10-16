@@ -1,21 +1,41 @@
 import React, { useState, useEffect, useCallback } from "react";
 
 // ---------------------------------------------------------------------------
-// Config — swap for production URL when deploying
+// Config
+//
+// The backend URL and API key live in chrome.storage.local (set once from the
+// service worker console, see SETUP_GUIDE "Deploy"), so switching between the
+// local and cloud backend needs no rebuild. Defaults to the local backend.
 // ---------------------------------------------------------------------------
-const BACKEND_URL = "http://localhost:3000";
+const DEFAULT_BACKEND_URL = "http://localhost:3000";
+let backendUrl = DEFAULT_BACKEND_URL;
+let apiKey = null;
+
+function configure(settings) {
+  backendUrl = (settings?.backendUrl || DEFAULT_BACKEND_URL).replace(/\/+$/, "");
+  apiKey = settings?.apiKey || null;
+}
 
 // ---------------------------------------------------------------------------
 // API helpers
 // ---------------------------------------------------------------------------
 async function api(path, options = {}) {
-  const res = await fetch(`${BACKEND_URL}${path}`, {
-    headers: { "Content-Type": "application/json" },
-    ...options,
-  });
+  const headers = { "Content-Type": "application/json" };
+  if (apiKey) headers["x-api-key"] = apiKey;
+
+  let res;
+  try {
+    res = await fetch(`${backendUrl}${path}`, { ...options, headers });
+  } catch {
+    throw new Error(`Can't reach the backend at ${backendUrl}. Is it running?`);
+  }
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
-    const err = new Error(body.error || `API error ${res.status}`);
+    const message =
+      res.status === 401
+        ? "The backend rejected the API key. Check apiKey in the extension's storage."
+        : body.error || `API error ${res.status}`;
+    const err = new Error(message);
     err.status = res.status;
     err.body = body;
     throw err;
@@ -323,6 +343,7 @@ export default function App() {
   useEffect(() => {
     if (typeof chrome !== "undefined" && chrome.runtime?.sendMessage) {
       chrome.runtime.sendMessage({ type: "GET_AUTH_STATE" }, (response) => {
+        configure(response); // before setUserId, which triggers the first API call
         if (response?.userId) {
           setUserId(response.userId);
           setEmail(response.email);
@@ -396,7 +417,7 @@ export default function App() {
     if (typeof chrome !== "undefined" && chrome.runtime?.sendMessage) {
       chrome.runtime.sendMessage({ type: "START_AUTH" });
     } else {
-      window.open(`${BACKEND_URL}/auth/login`, "_blank");
+      window.open(`${backendUrl}/auth/login`, "_blank");
     }
   }
 

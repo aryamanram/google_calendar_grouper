@@ -14,6 +14,7 @@ const {
   stopWatchForCalendar,
 } = require("../services/watchManager");
 const locks = require("../services/syncLocks");
+const { IS_CLOUD } = require("../runMode");
 
 // ---------------------------------------------------------------------------
 // Guards against double-clicks and overlapping work
@@ -121,17 +122,24 @@ async function trackStatus(userId, groupId, label, job) {
 }
 
 /**
- * Run tracked work in the background while holding the group's sync lock.
- * The check and the claim happen synchronously (no await in between), so
- * nothing can take the lock in a gap. Returns false if another sync already
- * holds it; the caller should then report busy instead of "syncing".
+ * Run tracked work while holding the group's sync lock. The check and the
+ * claim happen synchronously (no await in between), so nothing can take the
+ * lock in a gap.
+ *
+ * Returns null if another sync already holds the lock (the caller should
+ * report busy), otherwise a promise that settles when the work is done.
+ * Locally callers reply first and let it run in the background; in cloud
+ * mode they await it, because Cloud Run pauses the CPU once a request has
+ * been answered.
  */
 function runGroupJob(userId, groupId, label, job) {
-  if (locks.isBusy(groupId)) return false;
-  locks
+  if (locks.isBusy(groupId)) return null;
+  return locks
     .runExclusive(groupId, "job", () => trackStatus(userId, groupId, label, job))
-    .catch((err) => console.error(`${label} failed to start: ${err.message}`));
-  return true;
+    .catch((err) => {
+      console.error(`${label} failed to start: ${err.message}`);
+      return false;
+    });
 }
 
 /** Stop any sync on this group and wait for it to finish winding down. */
@@ -186,12 +194,16 @@ router.post("/", async (req, res) => {
     });
     groupSaved = true;
 
-    res.status(201).json({ group });
-
-    runGroupJob(userId, group.id, "Initial sync", async () => {
+    const job = runGroupJob(userId, group.id, "Initial sync", async () => {
       await registerWatchesForGroup(userId, group.id);
       await syncGroup(userId, group.id);
     });
+
+    if (IS_CLOUD && job) {
+      await job; // finish the first copy inside this request (see runGroupJob)
+      return res.status(201).json({ group: await db.getGroup(userId, group.id) });
+    }
+    res.status(201).json({ group });
   } catch (err) {
     console.error("Failed to create group:", err.message);
     // Don't leave an orphaned calendar behind if saving the config failed.
@@ -366,7 +378,9 @@ router.patch("/:groupId", async (req, res) => {
       if (needsJob) updates.status = "syncing";
       if (Object.keys(updates).length) await db.updateGroup(userId, groupId, updates);
 
-      res.json({ group: await db.getGroup(userId, groupId) });
+      // Locally, reply now and do the event work in the background. In cloud
+      // mode, reply after the work so Cloud Run keeps the CPU on for it.
+      if (!needsJob || !IS_CLOUD) res.json({ group: await db.getGroup(userId, groupId) });
       if (!needsJob) return;
 
       const mergedId = existing.mergedCalendarId;
@@ -386,6 +400,7 @@ router.patch("/:groupId", async (req, res) => {
           await syncSourceCalendar(userId, groupId, c.id, mergedId, c.detailLevel);
         }
       });
+      if (IS_CLOUD) res.json({ group: await db.getGroup(userId, groupId) });
     });
   } catch (err) {
     if (res.headersSent) return;
@@ -448,8 +463,11 @@ router.post("/:groupId/sync", async (req, res) => {
     if (!wait) {
       // trackStatus writes "syncing" as its first step, so only promise
       // "syncing" if the job actually claimed the lock.
-      if (!runGroupJob(userId, groupId, "Sync now", () => syncGroup(userId, groupId))) {
-        return busyResponse(res, locks.current(groupId)?.kind);
+      const job = runGroupJob(userId, groupId, "Sync now", () => syncGroup(userId, groupId));
+      if (!job) return busyResponse(res, locks.current(groupId)?.kind);
+      if (IS_CLOUD) {
+        await job; // see runGroupJob
+        return res.json({ group: await db.getGroup(userId, groupId) });
       }
       return res.status(202).json({ group: { ...group, status: "syncing", lastError: null } });
     }
