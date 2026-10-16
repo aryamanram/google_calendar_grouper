@@ -53,6 +53,38 @@ async function deleteCalendarIfExists(userId, calendarId) {
   }
 }
 
+/**
+ * Check request input before anything touches Google. Returns an error
+ * message, or null if the input is fine. `required` is true for Create,
+ * where both fields must be present; for Update each field is optional.
+ */
+function validateGroupInput({ name, sourceCalendars }, { required }) {
+  if (name !== undefined || required) {
+    if (typeof name !== "string" || !name.trim()) return "name must be a non-empty string";
+    if (name.trim().length > 200) return "name must be 200 characters or fewer";
+  }
+  if (sourceCalendars !== undefined || required) {
+    if (!Array.isArray(sourceCalendars) || sourceCalendars.length === 0) {
+      return "sourceCalendars must be a non-empty array of {id, summary, detailLevel}";
+    }
+    const ids = new Set();
+    for (const c of sourceCalendars) {
+      if (!c || typeof c !== "object" || typeof c.id !== "string" || !c.id) {
+        return "each source calendar needs a string id";
+      }
+      if (c.summary !== undefined && typeof c.summary !== "string") {
+        return "a source calendar's summary must be a string";
+      }
+      if (c.detailLevel !== undefined && c.detailLevel !== "full" && c.detailLevel !== "busy") {
+        return 'detailLevel must be "full" or "busy"';
+      }
+      if (ids.has(c.id)) return `calendar ${c.id} is listed twice`;
+      ids.add(c.id);
+    }
+  }
+  return null;
+}
+
 function cleanSources(list) {
   return list.map((c) => ({
     id: c.id,
@@ -118,11 +150,9 @@ async function stopSyncs(groupId) {
 router.post("/", async (req, res) => {
   const { userId, name, sourceCalendars } = req.body;
 
-  if (!userId || !name?.trim() || !sourceCalendars?.length) {
-    return res.status(400).json({
-      error: "Required: userId, name, sourceCalendars (array of {id, summary, detailLevel})",
-    });
-  }
+  if (!userId) return res.status(400).json({ error: "Missing userId" });
+  const invalid = validateGroupInput({ name, sourceCalendars }, { required: true });
+  if (invalid) return res.status(400).json({ error: invalid });
 
   if (creatingUsers.has(userId)) {
     return res.status(409).json({
@@ -284,6 +314,11 @@ router.patch("/:groupId", async (req, res) => {
   const { groupId } = req.params;
   if (!userId) return res.status(400).json({ error: "Missing userId" });
 
+  // Validate all input before anything else, and above all before any
+  // Google call, so a bad request can never leave a half-applied change.
+  const invalid = validateGroupInput({ name, sourceCalendars }, { required: false });
+  if (invalid) return res.status(400).json({ error: invalid });
+
   // A routine auto-sync check takes a second or two: wait for it. A
   // user-started job (create, update, sync now) gets a 409 instead.
   const busyKind = await locks.waitForBackground(groupId);
@@ -296,14 +331,9 @@ router.patch("/:groupId", async (req, res) => {
       const existing = await db.getGroup(userId, groupId);
       if (!existing) return res.status(404).json({ error: "Group not found" });
 
-      // Validate all input before changing anything on Google.
-      if (sourceCalendars && sourceCalendars.length === 0) {
-        return res.status(400).json({ error: "Select at least one calendar" });
-      }
-
       const updates = {};
 
-      const newName = name?.trim();
+      const newName = name === undefined ? null : name.trim();
       if (newName && newName !== existing.name) {
         await googleApi.renameCalendar(userId, existing.mergedCalendarId, newName);
         updates.name = newName;
@@ -313,7 +343,7 @@ router.patch("/:groupId", async (req, res) => {
       let added = [];
       let changed = [];
 
-      if (sourceCalendars) {
+      if (sourceCalendars !== undefined) {
         const next = cleanSources(sourceCalendars);
         const prevById = new Map(existing.sourceCalendars.map((c) => [c.id, c]));
         const nextIds = new Set(next.map((c) => c.id));
