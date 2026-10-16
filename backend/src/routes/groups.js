@@ -90,13 +90,16 @@ async function trackStatus(userId, groupId, label, job) {
 
 /**
  * Run tracked work in the background while holding the group's sync lock.
- * Claims the lock synchronously, so callers can respond to the HTTP request
- * right away. Callers check the lock is free first.
+ * The check and the claim happen synchronously (no await in between), so
+ * nothing can take the lock in a gap. Returns false if another sync already
+ * holds it; the caller should then report busy instead of "syncing".
  */
 function runGroupJob(userId, groupId, label, job) {
+  if (locks.isBusy(groupId)) return false;
   locks
     .runExclusive(groupId, "job", () => trackStatus(userId, groupId, label, job))
-    .catch((err) => console.error(`${label} could not start: ${err.message}`));
+    .catch((err) => console.error(`${label} failed to start: ${err.message}`));
+  return true;
 }
 
 /** Stop any sync on this group and wait for it to finish winding down. */
@@ -293,6 +296,11 @@ router.patch("/:groupId", async (req, res) => {
       const existing = await db.getGroup(userId, groupId);
       if (!existing) return res.status(404).json({ error: "Group not found" });
 
+      // Validate all input before changing anything on Google.
+      if (sourceCalendars && sourceCalendars.length === 0) {
+        return res.status(400).json({ error: "Select at least one calendar" });
+      }
+
       const updates = {};
 
       const newName = name?.trim();
@@ -306,9 +314,6 @@ router.patch("/:groupId", async (req, res) => {
       let changed = [];
 
       if (sourceCalendars) {
-        if (sourceCalendars.length === 0) {
-          return res.status(400).json({ error: "Select at least one calendar" });
-        }
         const next = cleanSources(sourceCalendars);
         const prevById = new Map(existing.sourceCalendars.map((c) => [c.id, c]));
         const nextIds = new Set(next.map((c) => c.id));
@@ -411,8 +416,11 @@ router.post("/:groupId/sync", async (req, res) => {
     if (!group) return res.status(404).json({ error: "Group not found" });
 
     if (!wait) {
-      await db.updateGroup(userId, groupId, { status: "syncing", lastError: null });
-      runGroupJob(userId, groupId, "Sync now", () => syncGroup(userId, groupId));
+      // trackStatus writes "syncing" as its first step, so only promise
+      // "syncing" if the job actually claimed the lock.
+      if (!runGroupJob(userId, groupId, "Sync now", () => syncGroup(userId, groupId))) {
+        return busyResponse(res, locks.current(groupId)?.kind);
+      }
       return res.status(202).json({ group: { ...group, status: "syncing", lastError: null } });
     }
 
