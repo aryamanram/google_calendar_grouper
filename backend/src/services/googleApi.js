@@ -90,7 +90,6 @@ async function listEvents(userId, calendarId, { syncToken, updatedMin } = {}) {
   if (syncToken) {
     params.syncToken = syncToken;
   } else if (updatedMin) {
-    params.updatedMin = updatedMin;
     params.timeMin = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(); // last 30 days
     params.timeMax = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(); // next year
   }
