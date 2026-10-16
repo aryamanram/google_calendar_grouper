@@ -16,7 +16,11 @@ const SETTINGS_KEYS = ["userId", "email", "backendUrl", "apiKey"];
 // Listen for messages from the popup
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "GET_AUTH_STATE") {
-    chrome.storage.local.get(SETTINGS_KEYS, (data) => {
+    chrome.storage.local.get(SETTINGS_KEYS, (data = {}) => {
+      if (chrome.runtime.lastError) {
+        sendResponse({ error: chrome.runtime.lastError.message });
+        return;
+      }
       sendResponse({
         userId: data.userId || null,
         email: data.email || null,
@@ -30,7 +34,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "START_AUTH") {
     // Open the backend's auth URL in a new tab
     chrome.storage.local.get(["backendUrl"], (data) => {
-      const base = (data.backendUrl || DEFAULT_BACKEND_URL).replace(/\/+$/, "");
+      if (chrome.runtime.lastError) {
+        sendResponse({ started: false, error: chrome.runtime.lastError.message });
+        return;
+      }
+      const base = (data?.backendUrl || DEFAULT_BACKEND_URL).replace(/\/+$/, "");
       chrome.tabs.create({ url: `${base}/auth/login` });
       sendResponse({ started: true });
     });

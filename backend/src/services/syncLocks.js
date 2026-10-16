@@ -12,9 +12,21 @@
 //   "background" auto-sync / webhook checks. These are short, so user
 //                actions wait for them instead of failing.
 //
-// This lives in memory, which is correct for one server process. With
-// several Cloud Run instances it would need to move into Firestore.
+// Two layers:
+//   1. In memory: claimed synchronously, so code in this process can check
+//      and claim with no gap.
+//   2. A Firestore lease (models/firestore.js): Cloud Run can briefly run a
+//      second instance, e.g. during a deploy, and only a shared lock stops both
+//      from syncing the same calendar. The lease expires on its own if an
+//      instance dies, and is renewed while a long sync runs.
 // ---------------------------------------------------------------------------
+
+const crypto = require("crypto");
+const db = require("../models/firestore");
+
+const LEASE_TTL_MS = 5 * 60 * 1000; // freed automatically this long after a crash
+const LEASE_RENEW_MS = 60 * 1000;
+const INSTANCE = process.env.K_REVISION || "local"; // Cloud Run sets K_REVISION
 
 const active = new Map(); // groupId -> { kind, promise }
 
@@ -49,8 +61,25 @@ function runExclusive(groupId, kind, fn) {
   const entry = { kind, promise: null };
   active.set(groupId, entry); // claim before fn starts, so nothing can sneak in
   entry.promise = (async () => {
+    const owner = `${INSTANCE}:${crypto.randomUUID()}`;
+    let renewTimer = null;
     try {
-      return await fn();
+      const lease = await db.acquireLease(groupId, owner, kind, LEASE_TTL_MS);
+      if (!lease.ok) throw new GroupBusyError(lease.kind); // another instance has it
+      renewTimer = setInterval(() => {
+        db.renewLease(groupId, owner, LEASE_TTL_MS).catch((err) =>
+          console.warn(`Could not renew sync lease for ${groupId}: ${err.message}`)
+        );
+      }, LEASE_RENEW_MS);
+      renewTimer.unref?.();
+      try {
+        return await fn();
+      } finally {
+        clearInterval(renewTimer);
+        await db.releaseLease(groupId, owner).catch((err) =>
+          console.warn(`Could not release sync lease for ${groupId}: ${err.message}`)
+        );
+      }
     } finally {
       if (active.get(groupId) === entry) active.delete(groupId);
     }

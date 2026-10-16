@@ -487,6 +487,13 @@ export default function App() {
         setSelections(selectionsFor(calendars, err.body.group));
         setNotice({ kind: "info", text: "You already have a shared calendar, so it's loaded below." });
       } else {
+        // A failed copy still returns the group (status "error"), so show it
+        // with its Retry button instead of losing track of it.
+        if (err.body?.group) {
+          setGroup(err.body.group);
+          setGroupName(err.body.group.name);
+          setSelections(selectionsFor(calendars, err.body.group));
+        }
         setNotice({ kind: "error", text: err.message });
       }
     } finally {
@@ -507,6 +514,7 @@ export default function App() {
       });
       setGroup(res.group); // status "syncing" starts the progress poll
     } catch (err) {
+      if (err.body?.group) setGroup(err.body.group);
       setNotice({ kind: "error", text: err.message });
     } finally {
       setBusy(null);

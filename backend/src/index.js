@@ -68,7 +68,9 @@ app.get("/health", (_req, res) => res.json({ status: "ok", mode: RUN_MODE }));
 async function start() {
   if (IS_CLOUD) {
     const missing = ["API_KEY", "TICK_SECRET", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET",
-      "GOOGLE_REDIRECT_URI", "EXTENSION_ID"].filter((k) => !process.env[k]);
+      "GOOGLE_REDIRECT_URI", "EXTENSION_ID"].filter((k) => !process.env[k]?.trim());
+    // An empty allow-list would let any Google account sign in.
+    if (authRoutes.allowedEmails().length === 0) missing.push("ALLOWED_EMAILS");
     if (missing.length) {
       throw new Error(`Cloud mode needs these environment variables: ${missing.join(", ")}`);
     }

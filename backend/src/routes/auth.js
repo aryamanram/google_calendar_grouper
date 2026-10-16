@@ -3,15 +3,22 @@ const router = express.Router();
 const { createOAuth2Client } = require("../services/googleApi");
 const { saveUserTokens } = require("../models/firestore");
 const { requireApiKey } = require("../middleware/auth");
+const { IS_CLOUD } = require("../runMode");
 
-// Optional comma-separated allow-list, e.g. "you@gmail.com". When set, nobody
-// else can sign in and store their tokens in your database.
-function isAllowedEmail(email) {
-  const list = (process.env.ALLOWED_EMAILS || "")
+// Comma-separated allow-list, e.g. "you@gmail.com". When set, nobody else can
+// sign in and store their tokens in your database. Required in cloud mode
+// (index.js refuses to start without it); optional locally.
+function allowedEmails() {
+  return (process.env.ALLOWED_EMAILS || "")
     .split(",")
     .map((e) => e.trim().toLowerCase())
     .filter(Boolean);
-  return list.length === 0 || list.includes(String(email || "").toLowerCase());
+}
+
+function isAllowedEmail(email) {
+  const list = allowedEmails();
+  if (list.length === 0) return !IS_CLOUD; // never open sign-in to everyone in the cloud
+  return list.includes(String(email || "").toLowerCase());
 }
 
 // The scopes we need:
@@ -147,3 +154,4 @@ router.get("/calendars", requireApiKey, async (req, res) => {
 });
 
 module.exports = router;
+module.exports.allowedEmails = allowedEmails;

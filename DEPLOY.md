@@ -112,7 +112,7 @@ gcloud run deploy $SERVICE --source backend --region $REGION \
 
 What the flags mean:
 - `--allow-unauthenticated`: the extension and Google's sign-in page must be able to reach the backend. The API key and tick secret are what keep it private.
-- `--max-instances 1`: one copy of the backend, so its sync locks always work. This also caps cost.
+- `--max-instances 1`: normally one copy of the backend, which also caps cost. Cloud Run can briefly run a second copy, for example during a deploy. A lock stored in Firestore (`syncLocks`) makes sure only one copy ever syncs a given calendar at a time.
 - `--min-instances 0`: nothing runs, and nothing is billed, between requests.
 - `--timeout 900`: gives a large first copy up to 15 minutes.
 
