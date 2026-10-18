@@ -202,6 +202,48 @@ async function getMappingsForSourceCalendar(userId, groupId, sourceCalendarId) {
 }
 
 // ---------------------------------------------------------------------------
+// Sync leases
+//
+// A short-lived lock per group, shared by every backend instance. Cloud Run
+// can briefly run two instances (for example while a new revision rolls out),
+// and in-memory locks can't see each other. Doc: syncLocks/{groupId}
+//   { owner, kind, expiresAt }   expiresAt in ms; an expired lease is free.
+// ---------------------------------------------------------------------------
+
+/** Take the lease if it's free, expired, or already ours. Returns { ok, kind }. */
+async function acquireLease(groupId, owner, kind, ttlMs) {
+  const ref = getDb().collection("syncLocks").doc(groupId);
+  return getDb().runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    const now = Date.now();
+    const cur = snap.exists ? snap.data() : null;
+    if (cur && cur.expiresAt > now && cur.owner !== owner) return { ok: false, kind: cur.kind };
+    tx.set(ref, { owner, kind, expiresAt: now + ttlMs });
+    return { ok: true };
+  });
+}
+
+/** Extend our lease. Returns false if we no longer hold it. */
+async function renewLease(groupId, owner, ttlMs) {
+  const ref = getDb().collection("syncLocks").doc(groupId);
+  return getDb().runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists || snap.data().owner !== owner) return false;
+    tx.update(ref, { expiresAt: Date.now() + ttlMs });
+    return true;
+  });
+}
+
+/** Release our lease (no-op if someone else holds it). */
+async function releaseLease(groupId, owner) {
+  const ref = getDb().collection("syncLocks").doc(groupId);
+  await getDb().runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (snap.exists && snap.data().owner === owner) tx.delete(ref);
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Watch Channels
 //
 // Stored at top level so the webhook handler can look up by channel ID
@@ -247,6 +289,10 @@ module.exports = {
   listGroups,
   listAllGroups,
   deleteGroup,
+  // sync leases
+  acquireLease,
+  renewLease,
+  releaseLease,
   // event mappings
   saveEventMapping,
   getEventMapping,

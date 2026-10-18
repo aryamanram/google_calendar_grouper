@@ -12,11 +12,28 @@
 //   "background" auto-sync / webhook checks. These are short, so user
 //                actions wait for them instead of failing.
 //
-// This lives in memory, which is correct for one server process. With
-// several Cloud Run instances it would need to move into Firestore.
+// Two layers:
+//   1. In memory: claimed synchronously, so code in this process can check
+//      and claim with no gap.
+//   2. A Firestore lease (models/firestore.js): Cloud Run can briefly run a
+//      second instance, e.g. during a deploy, and only a shared lock stops both
+//      from syncing the same calendar. The lease expires on its own if an
+//      instance dies, and is renewed while a long sync runs.
 // ---------------------------------------------------------------------------
 
-const active = new Map(); // groupId -> { kind, promise }
+const crypto = require("crypto");
+const db = require("../models/firestore");
+
+// Timings (overridable for tests). A sync stops writing LEASE_SAFETY_MS before
+// its lease could expire, so it has always stopped before another instance is
+// allowed to take over, even if renewals have been failing.
+const LEASE_TTL_MS = Number(process.env.SYNC_LEASE_TTL_MS) || 5 * 60 * 1000;
+const LEASE_RENEW_MS = Number(process.env.SYNC_LEASE_RENEW_MS) || 60 * 1000;
+const LEASE_SAFETY_MS = Number(process.env.SYNC_LEASE_SAFETY_MS) || 90 * 1000;
+const INSTANCE = process.env.K_REVISION || "local"; // Cloud Run sets K_REVISION
+
+// groupId -> { kind, promise, lease: { lost, validUntil } }
+const active = new Map();
 
 class GroupBusyError extends Error {
   constructor(kind) {
@@ -28,6 +45,27 @@ class GroupBusyError extends Error {
     this.code = "SYNC_IN_PROGRESS";
     this.kind = kind;
   }
+}
+
+class LeaseLostError extends Error {
+  constructor() {
+    super("Lost the sync lock for this calendar; another instance may take over. Stopping this sync.");
+    this.code = "LEASE_LOST";
+  }
+}
+
+/**
+ * Call before every write a sync makes (Google Calendar or Firestore).
+ * Throws LeaseLostError once this process can no longer be sure it holds the
+ * group's lease: a renewal said someone else owns it, or renewals have failed
+ * long enough that the lease might expire soon.
+ */
+function assertLeaseHeld(groupId) {
+  const entry = active.get(groupId);
+  if (!entry || !entry.lease) {
+    throw new Error(`Sync for ${groupId} is running without its lock (must go through runExclusive)`);
+  }
+  if (entry.lease.lost || Date.now() >= entry.lease.validUntil) throw new LeaseLostError();
 }
 
 function current(groupId) {
@@ -46,11 +84,41 @@ function runExclusive(groupId, kind, fn) {
   if (active.has(groupId)) {
     return Promise.reject(new GroupBusyError(active.get(groupId).kind));
   }
-  const entry = { kind, promise: null };
+  const entry = { kind, promise: null, lease: null };
   active.set(groupId, entry); // claim before fn starts, so nothing can sneak in
   entry.promise = (async () => {
+    const owner = `${INSTANCE}:${crypto.randomUUID()}`;
+    let renewTimer = null;
     try {
-      return await fn();
+      const asked = Date.now(); // measure from before the request: conservative
+      const lease = await db.acquireLease(groupId, owner, kind, LEASE_TTL_MS);
+      if (!lease.ok) throw new GroupBusyError(lease.kind); // another instance has it
+      entry.lease = { lost: false, validUntil: asked + LEASE_TTL_MS - LEASE_SAFETY_MS };
+
+      renewTimer = setInterval(async () => {
+        if (entry.lease.lost) return;
+        const t0 = Date.now();
+        try {
+          if (await db.renewLease(groupId, owner, LEASE_TTL_MS)) {
+            entry.lease.validUntil = t0 + LEASE_TTL_MS - LEASE_SAFETY_MS;
+          } else {
+            entry.lease.lost = true; // someone else owns it now
+            console.warn(`Sync lease for ${groupId} is held elsewhere; stopping this sync`);
+          }
+        } catch (err) {
+          // Keep going for now; assertLeaseHeld stops writes before validUntil.
+          console.warn(`Could not renew sync lease for ${groupId}: ${err.message}`);
+        }
+      }, LEASE_RENEW_MS);
+      renewTimer.unref?.();
+      try {
+        return await fn();
+      } finally {
+        clearInterval(renewTimer);
+        await db.releaseLease(groupId, owner).catch((err) =>
+          console.warn(`Could not release sync lease for ${groupId}: ${err.message}`)
+        );
+      }
     } finally {
       if (active.get(groupId) === entry) active.delete(groupId);
     }
@@ -78,6 +146,8 @@ async function waitForBackground(groupId) {
 
 module.exports = {
   GroupBusyError,
+  LeaseLostError,
+  assertLeaseHeld,
   current,
   isBusy,
   runExclusive,

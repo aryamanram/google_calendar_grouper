@@ -77,7 +77,7 @@ router.post("/calendar", async (req, res) => {
       await updateGroup(userId, groupId, { lastSyncedAt: new Date().toISOString() });
     });
   } catch (err) {
-    if (err.code === "SYNC_IN_PROGRESS") return;
+    if (err.code === "SYNC_IN_PROGRESS" || err.code === "LEASE_LOST") return; // auto-sync catches up
     console.error(`Webhook sync error for channel ${channelId}:`, err);
   }
 });
