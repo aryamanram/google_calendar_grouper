@@ -45,6 +45,11 @@ async function pollOnce() {
         });
       } catch (err) {
         if (err.code === "SYNC_IN_PROGRESS") continue;
+        if (err.code === "LEASE_LOST") {
+          // Another instance took over this group; it finishes the sync.
+          console.warn(`Auto-sync for "${g.name}" stopped: ${err.message}`);
+          continue;
+        }
         summary.errors++;
         console.error(`Auto-sync failed for "${g.name}": ${err.message}`);
         await db

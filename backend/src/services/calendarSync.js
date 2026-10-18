@@ -1,5 +1,6 @@
 const googleApi = require("./googleApi");
 const db = require("../models/firestore");
+const { assertLeaseHeld } = require("./syncLocks");
 
 // ---------------------------------------------------------------------------
 // Cancellation
@@ -24,6 +25,22 @@ function assertNotCancelled(groupId) {
   if (cancelledGroups.has(groupId)) {
     throw new Error("Shared calendar was deleted; stopping sync");
   }
+}
+
+/**
+ * Every write a sync makes goes through here: it stops if the group was
+ * deleted, or if this process may no longer hold the group's sync lease
+ * (so two instances never write the same calendar at once).
+ *
+ * One exception: once an insert has succeeded on Google, its mapping is
+ * always saved. Otherwise the next sync wouldn't know the copy exists and
+ * would create a duplicate. Updates and deletes are safe to repeat, so their
+ * follow-up writes stay guarded.
+ */
+function guarded(groupId, write) {
+  assertNotCancelled(groupId);
+  assertLeaseHeld(groupId);
+  return write();
 }
 
 // ---------------------------------------------------------------------------
@@ -97,11 +114,11 @@ async function applyOccurrenceChange(userId, groupId, sourceCalendarId, mergedCa
     }
     if (!targetId) return "skipped";
     try {
-      await googleApi.deleteEvent(userId, mergedCalendarId, targetId);
+      await guarded(groupId, () => googleApi.deleteEvent(userId, mergedCalendarId, targetId));
     } catch (e) {
       if (!isGone(e)) throw e;
     }
-    if (existing) await db.deleteEventMapping(userId, groupId, sourceCalendarId, event.id);
+    if (existing) await guarded(groupId, () => db.deleteEventMapping(userId, groupId, sourceCalendarId, event.id));
     return "deleted";
   }
 
@@ -115,10 +132,10 @@ async function applyOccurrenceChange(userId, groupId, sourceCalendarId, mergedCa
 
   if (targetId) {
     try {
-      await googleApi.updateEvent(userId, mergedCalendarId, targetId, body);
-      await db.saveEventMapping(userId, groupId, sourceCalendarId, event.id, targetId, {
+      await guarded(groupId, () => googleApi.updateEvent(userId, mergedCalendarId, targetId, body));
+      await guarded(groupId, () => db.saveEventMapping(userId, groupId, sourceCalendarId, event.id, targetId, {
         sourceUpdated: event.updated || null,
-      });
+      }));
       return "updated";
     } catch (e) {
       if (!isGone(e)) throw e;
@@ -127,7 +144,9 @@ async function applyOccurrenceChange(userId, groupId, sourceCalendarId, mergedCa
 
   // The series itself isn't on the shared calendar (for example it ended
   // before the sync window), so copy this occurrence as a standalone event.
-  const created = await googleApi.insertEvent(userId, mergedCalendarId, body);
+  const created = await guarded(groupId, () => googleApi.insertEvent(userId, mergedCalendarId, body));
+  // The copy now exists on Google, so always record it, even if the lease was
+  // lost meanwhile. Skipping this would make the next sync copy it again.
   await db.saveEventMapping(userId, groupId, sourceCalendarId, event.id, created.id, {
     sourceUpdated: event.updated || null,
   });
@@ -201,11 +220,11 @@ async function syncSourceCalendar(userId, groupId, sourceCalendarId, mergedCalen
       // Event was deleted on the source calendar
       if (existing) {
         try {
-          await googleApi.deleteEvent(userId, mergedCalendarId, existing.mergedEventId);
+          await guarded(groupId, () => googleApi.deleteEvent(userId, mergedCalendarId, existing.mergedEventId));
         } catch (e) {
           if (!isGone(e)) throw e; // already gone on our side is fine
         }
-        await db.deleteEventMapping(userId, groupId, sourceCalendarId, event.id);
+        await guarded(groupId, () => db.deleteEventMapping(userId, groupId, sourceCalendarId, event.id));
         deleted++;
       }
       continue;
@@ -219,10 +238,10 @@ async function syncSourceCalendar(userId, groupId, sourceCalendarId, mergedCalen
 
     if (existing) {
       try {
-        await googleApi.updateEvent(userId, mergedCalendarId, existing.mergedEventId, body);
-        await db.saveEventMapping(
+        await guarded(groupId, () => googleApi.updateEvent(userId, mergedCalendarId, existing.mergedEventId, body));
+        await guarded(groupId, () => db.saveEventMapping(
           userId, groupId, sourceCalendarId, event.id, existing.mergedEventId, mappingExtra
-        );
+        ));
         updated++;
         continue;
       } catch (e) {
@@ -231,7 +250,8 @@ async function syncSourceCalendar(userId, groupId, sourceCalendarId, mergedCalen
       }
     }
 
-    const created = await googleApi.insertEvent(userId, mergedCalendarId, body);
+    const created = await guarded(groupId, () => googleApi.insertEvent(userId, mergedCalendarId, body));
+    // The copy now exists on Google, so always record it (see applyOccurrenceChange).
     await db.saveEventMapping(userId, groupId, sourceCalendarId, event.id, created.id, mappingExtra);
     inserted++;
   }
@@ -245,7 +265,7 @@ async function syncSourceCalendar(userId, groupId, sourceCalendarId, mergedCalen
       const updatedCalendars = fresh.sourceCalendars.map((c) =>
         c.id === sourceCalendarId ? { ...c, syncToken: nextSyncToken } : c
       );
-      await db.updateGroup(userId, groupId, { sourceCalendars: updatedCalendars });
+      await guarded(groupId, () => db.updateGroup(userId, groupId, { sourceCalendars: updatedCalendars }));
     }
   }
   if (!nextSyncToken) {
@@ -281,7 +301,7 @@ async function syncGroup(userId, groupId) {
     results.push({ calendarId: cal.id, summary: cal.summary, ...r });
   }
 
-  await db.updateGroup(userId, groupId, { lastSyncedAt: new Date().toISOString() });
+  await guarded(groupId, () => db.updateGroup(userId, groupId, { lastSyncedAt: new Date().toISOString() }));
   return results;
 }
 
@@ -296,11 +316,11 @@ async function purgeSourceCalendar(userId, groupId, sourceCalendarId, mergedCale
   for (const mapping of mappings) {
     assertNotCancelled(groupId);
     try {
-      await googleApi.deleteEvent(userId, mergedCalendarId, mapping.mergedEventId);
+      await guarded(groupId, () => googleApi.deleteEvent(userId, mergedCalendarId, mapping.mergedEventId));
     } catch (e) {
       if (!isGone(e)) throw e;
     }
-    await db.deleteEventMapping(userId, groupId, sourceCalendarId, mapping.sourceEventId);
+    await guarded(groupId, () => db.deleteEventMapping(userId, groupId, sourceCalendarId, mapping.sourceEventId));
     removed++;
   }
 
