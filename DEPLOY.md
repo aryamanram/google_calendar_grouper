@@ -33,7 +33,11 @@ Cloud Run and Cloud Scheduler need a billing account attached, even when usage s
 1. Cloud console → **Billing** → link a billing account to `calendar-grouper-511703`.
 2. **Billing → Budgets & alerts → Create budget**: amount **$1**, alerts at 50%, 90% and 100%.
 
+Choose **Alerts only** for this budget, and keep **Free tier credits** checked under *Savings*, so the budget tracks what you'd actually pay. If it only offers "All projects (1)", that's the same thing while this billing account has one project.
+
 A budget only *emails* you; it doesn't stop spending. At this project's size you should never see one of these emails. If you do, something is looping, and you want to know about it.
+
+**Optional hard stop:** create a second budget with **Spend cap enforcement**, service **Cloud Run** only, amount **$10**. Spend caps currently cover only a few services, Cloud Run among them. They count cost *before* the free tier, and your auto-sync is roughly $1/month gross, so a $1 cap would pause syncing even though you pay nothing. $10 only trips if something runs away.
 
 ### 0c. Variables (re-run these if you open a new Terminal)
 ```bash
@@ -128,8 +132,13 @@ Expect `{"status":"ok","mode":"cloud"}`. If it can't connect, confirm the URL Cl
 
 In the Cloud console, open **Google Auth Platform**:
 
-1. **Clients** → `Calendar Grouper Backend` → **Authorized redirect URIs** → **Add URI** → paste the output of `echo $URL/auth/callback` → **Save**. Keep the localhost URI too.
-2. **Audience** → **Publish app** → **Confirm**. Status changes to **In production**.
+1. **Clients** → `Calendar Grouper Backend` → scroll to **Authorized redirect URIs** (*not* "Authorized JavaScript origins" above it, which rejects paths with "URIs must not contain a path") → **Add URI** → paste the output of `echo $URL/auth/callback` → **Save**. Keep the localhost URI too.
+2. **Branding**: publishing needs a homepage and privacy policy on an authorized domain. This repo serves both from `docs/` with GitHub Pages: repo **Settings → Pages →** *Deploy from a branch*, `main`, `/docs`. Then fill in:
+   - **Application home page:** `https://aryamanram.github.io/google_calendar_grouper/`
+   - **Application privacy policy link:** `https://aryamanram.github.io/google_calendar_grouper/privacy.html`
+   - **Authorized domains:** `aryamanram.github.io`
+   - Skip the logo. Uploading one forces a verification review.
+3. **Audience** → **Publish app** → **Confirm**. Status changes to **In production**. A "needs verification" notice appears; leave it, since it's not required at this size.
 
 Why publish: while the app is in *Testing*, Google expires the backend's access after 7 days, and syncing would silently stop every week. Once published, the access lasts until you revoke it.
 
@@ -145,12 +154,18 @@ Because the app isn't verified, sign-in shows a "Google hasn't verified this app
    open "$URL/auth/login"
    ```
 3. On the warning screen, click **Advanced → Go to Calendar Grouper**. Leave the **Calendar** box checked, then click **Continue**. You should see "Authorization successful!"
+   If you already granted access while running locally, there are no checkboxes. The screen says the app "already has some access". That's fine; click **Continue**.
 
 This saves a fresh, non-expiring token in Firestore. Only `aryamanramchandran@gmail.com` is allowed to sign in (`ALLOWED_EMAILS`).
 
 ---
 
 ## 5 — Schedule the 2-minute check
+If this is a new Terminal window, re-run the 0c block, then read the tick secret back (it isn't printed):
+```bash
+TICK_SECRET=$(gcloud secrets versions access latest --secret=TICK_SECRET)
+echo "secret length: ${#TICK_SECRET}"   # expect 64
+```
 ```bash
 gcloud scheduler jobs create http $SERVICE-tick --location $REGION \
   --schedule "*/2 * * * *" --uri "$URL/internal/tick" --http-method POST \
@@ -162,12 +177,21 @@ sleep 15
 gcloud logging read "resource.type=cloud_run_revision AND resource.labels.service_name=$SERVICE" \
   --limit 20 --freshness 10m --format='value(textPayload)'
 ```
-An error-free log means it's working. When events changed, you'll see lines like `Auto-sync "My full schedule": 1 change(s) applied`.
+An error-free log means it's working. When events changed, you'll see lines like `Auto-sync "My full schedule": 1 change(s) applied`. A check that finds nothing prints nothing, so to confirm the checks themselves are succeeding, look at the request log:
+```bash
+gcloud logging read "resource.type=cloud_run_revision AND resource.labels.service_name=$SERVICE AND httpRequest.requestUrl:\"/internal/tick\"" \
+  --limit 5 --freshness 1h --format='value(timestamp,httpRequest.status,httpRequest.latency)'
+```
+You want a **200** every 2 minutes. A **401** means the tick secret doesn't match.
 
 ---
 
 ## 6 — Point the extension at the cloud
 
+0. Rebuild the popup so it has the code that reads the URL and key from storage. An old build only knows `localhost` and shows "Failed to fetch":
+   ```bash
+   (cd extension/popup && npm run build)
+   ```
 1. `chrome://extensions` → Calendar Grouper → **service worker** → **Console**.
 2. Paste this, with your URL and the API key from step 1:
    ```javascript
@@ -244,6 +268,10 @@ Delete the shared calendar from the popup first if you no longer want it.
 | `redirect_uri_mismatch` at sign-in | Step 3.1: the URI must exactly match `$URL/auth/callback` |
 | Popup: "The backend rejected the API key" | `apiKey` in step 6 doesn't match: `gcloud secrets versions access latest --secret=API_KEY` |
 | Popup: "Can't reach the backend" | `backendUrl` typo, or a trailing slash |
+| Popup: "Failed to fetch" | The popup is an old build that only knows `localhost`. Run `npm run build` in `extension/popup` and reload the extension (step 6.0) |
+| `--region: expected one argument` / `No host part in the URL` | The step 0c variables aren't set in this Terminal window. Re-run the 0c block |
+| "Invalid Origin: URIs must not contain a path" | The redirect URI is in *Authorized JavaScript origins*. Move it to *Authorized redirect URIs* (step 3.1) |
+| Publish says homepage / privacy policy URL required | Step 3.2 (Branding + GitHub Pages) |
 | Popup shows a CORS error in its console | `EXTENSION_ID` in step 2 doesn't match the ID on the extension card |
 | Logs: `invalid_grant` | The sign-in token is gone or expired. Make sure the app is **In production** (step 3.2), then repeat step 4 |
 | Events stop appearing | Logs for `Auto-sync failed`; Cloud Scheduler → `calendar-grouper-tick` → last run status |
