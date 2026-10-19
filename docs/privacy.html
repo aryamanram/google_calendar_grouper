@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Privacy Policy · Calendar Grouper</title>
+  <meta name="description" content="What Calendar Grouper accesses, stores and shares.">
+  <link rel="icon" href="icon.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <div class="bar">
+      <a class="home" href="./"><img src="icon.png" alt="">Calendar Grouper</a>
+      <nav><a href="./">Home</a><a href="https://github.com/aryamanram/google_calendar_grouper">GitHub</a></nav>
+    </div>
+  </header>
+
+  <main>
+    <h1>Privacy policy</h1>
+    <p class="muted">Effective October 18, 2026</p>
+
+    <p>Calendar Grouper is a personal project by Aryaman Ramchandran. It combines Google Calendars you choose into one shared calendar. This policy explains what it accesses, what it stores, and how to remove it.</p>
+
+    <h2>What Calendar Grouper accesses</h2>
+    <p>When you sign in with Google, you grant two permissions:</p>
+    <ul>
+      <li><strong>Google Calendar</strong> (<code>calendar</code>): used to list your calendars, read events from the calendars you select, create the one shared calendar, copy events into it and keep them in sync, and manage who that shared calendar is shared with. Calendar Grouper never changes or deletes events on your own calendars.</li>
+      <li><strong>Your email address</strong> (<code>userinfo.email</code>): used to identify your account and to check that it's allowed to sign in.</li>
+    </ul>
+
+    <h2>What is stored</h2>
+    <p>Calendar Grouper keeps a small amount of data in a Google Cloud Firestore database run by the developer:</p>
+    <table>
+      <tr><th>Data</th><th>Why</th></tr>
+      <tr><td>Google sign-in tokens</td><td>To sync your calendars while you're away</td></tr>
+      <tr><td>Your Google account ID</td><td>To link your settings to your account</td></tr>
+      <tr><td>Shared calendar settings: its name, the IDs and names of the calendars you selected, each calendar's detail level, and the email addresses you share it with</td><td>To remember your choices</td></tr>
+      <tr><td>Event ID pairs (an original event's ID and its copy's ID) with a last-modified timestamp</td><td>To update and remove copies correctly, and to skip events that haven't changed</td></tr>
+      <tr><td>Sync status: progress markers, the last sync time and any error message</td><td>To sync only what changed, and to show sync status</td></tr>
+    </table>
+    <div class="card">
+      <strong>Event contents aren't stored by Calendar Grouper.</strong> Titles, descriptions and locations are read from your selected calendars and written straight into the shared calendar, which lives in your own Google account. They never go into Calendar Grouper's database. For calendars set to "busy", only the times are copied.
+    </div>
+    <p>Server logs record calendar names, event counts and errors, and are kept under Google Cloud's default log retention. They don't contain event contents.</p>
+
+    <h2>Sharing</h2>
+    <p>The shared calendar's events are visible to the people <em>you</em> choose to share it with, through Google Calendar's normal sharing. Calendar Grouper doesn't sell, rent or share your data with anyone. It shows no ads and includes no analytics or tracking. It runs on Google Cloud (Cloud Run, Firestore, Secret Manager), which processes this data on the developer's behalf.</p>
+
+    <h2>Google API Services User Data Policy</h2>
+    <p>Calendar Grouper's use and transfer of information received from Google APIs will adhere to the <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>, including the Limited Use requirements. Data from Google APIs is used only to provide the features described here, isn't used for advertising, and isn't read by people except when needed for security, to comply with the law, or with your permission.</p>
+
+    <h2>Keeping and deleting your data</h2>
+    <ul>
+      <li><strong>Delete the shared calendar</strong> from the extension. This removes the calendar from Google and deletes its settings and event ID pairs from Calendar Grouper's database.</li>
+      <li><strong>Revoke access</strong> at any time at <a href="https://myaccount.google.com/connections">myaccount.google.com/connections</a>. Calendar Grouper then can no longer reach your calendars.</li>
+      <li><strong>Remove everything,</strong> including your stored sign-in tokens, by emailing the address below. It's deleted within 30 days.</li>
+    </ul>
+
+    <h2>Children</h2>
+    <p>Calendar Grouper isn't directed at children under 13 and doesn't knowingly collect their data.</p>
+
+    <h2>Changes</h2>
+    <p>If this policy changes, the updated version will be posted on this page with a new effective date.</p>
+
+    <h2>Contact</h2>
+    <p>Questions or deletion requests: <a href="mailto:aryamanramchandran@gmail.com">aryamanramchandran@gmail.com</a></p>
+  </main>
+
+  <footer>
+    <div class="bar"><a href="./">Calendar Grouper</a> · Privacy policy</div>
+  </footer>
+</body>
+</html>

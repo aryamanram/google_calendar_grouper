@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Calendar Grouper</title>
+  <meta name="description" content="Share all your Google Calendars as one calendar, without merging them.">
+  <link rel="icon" href="icon.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <div class="bar">
+      <a class="home" href="./"><img src="icon.png" alt="">Calendar Grouper</a>
+      <nav><a href="privacy.html">Privacy</a><a href="https://github.com/aryamanram/google_calendar_grouper">GitHub</a></nav>
+    </div>
+  </header>
+
+  <main>
+    <h1>Share your whole schedule as one calendar</h1>
+    <p class="lede">Keep your calendars organized by topic. Give someone one calendar they can toggle on and off that contains everything you choose to share.</p>
+
+    <h2>How it works</h2>
+    <ol class="steps">
+      <li>In the Chrome extension, tick the calendars to include. For each one, choose full details or just "busy".</li>
+      <li>Calendar Grouper creates one new calendar in your Google account and keeps it in sync. New, edited and deleted events show up within a couple of minutes.</li>
+      <li>Share that one calendar. The other person adds it like any Google Calendar and needs nothing installed.</li>
+    </ol>
+
+    <div class="card">
+      <strong>Your calendars stay as they are.</strong> Nothing is merged or changed. Calendar Grouper only reads the calendars you select, and only writes to the shared calendar it creates.
+    </div>
+
+    <h2>Status</h2>
+    <p>A personal project, built with a Chrome extension (Manifest V3), a Node.js backend on Google Cloud Run, Firestore and the Google Calendar API. Source code is on <a href="https://github.com/aryamanram/google_calendar_grouper">GitHub</a>.</p>
+  </main>
+
+  <footer>
+    <div class="bar">Calendar Grouper · <a href="privacy.html">Privacy policy</a></div>
+  </footer>
+</body>
+</html>
