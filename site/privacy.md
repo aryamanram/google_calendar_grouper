@@ -34,6 +34,8 @@ Calendar Grouper keeps a small amount of data in a Google Cloud Firestore databa
 
 **Event contents aren't stored by Calendar Grouper.** Titles, descriptions and locations are read from your selected calendars and written straight into the shared calendar, which lives in your own Google account. They never go into Calendar Grouper's database. For calendars set to "busy", only the times are copied.
 
+The extension also keeps a few settings in your browser (`chrome.storage.local`): the backend address, its API key, and the signed-in account's ID and email. **Sign out** removes the account ID and email; removing the extension deletes all of it.
+
 Server logs record calendar names, event counts and errors, and are kept under Google Cloud's default log retention. They don't contain event contents.
 
 ## This website

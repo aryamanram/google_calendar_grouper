@@ -30,7 +30,7 @@ The next change to the original overwrites it. If you delete a copy by hand, it'
 
 ## What does it cost?
 
-To run your own copy: nothing, in practice. With one shared calendar checked every two minutes, usage stays inside Google Cloud's free tier for Cloud Run, Cloud Scheduler and Firestore. Google requires a billing account with a card on file to turn these services on, and the setup guide has you add a $1 budget alert.
+To run your own copy: nothing, in practice. Checking every two minutes, usage for a handful of people stays inside Google Cloud's free tier for Cloud Run, Cloud Scheduler and Firestore. Each extra person adds a little Firestore and Cloud Run usage, so keep the budget alert on as you add people. Google requires a billing account with a card on file to turn these services on, and the setup guide has you add a $1 budget alert.
 
 ## How do I remove it completely?
 
@@ -50,4 +50,4 @@ No. There's no public Calendar Grouper service. To use it, you [run your own cop
 
 ## Can two people share their schedules with each other?
 
-Yes. Each person creates their own shared calendar and shares it with the other. Both can use the same backend: the person who runs it adds the second person's account and extension (see [Adding another person](/self-hosting/deploy#adding-another-person)). Each person only ever sees and controls their own calendars.
+Yes. Each person creates their own shared calendar and shares it with the other. Both can use the same backend: the person who runs it adds the second person's account and extension (see [Adding another person](/self-hosting/deploy#adding-another-person)). Each person picks and controls only their own source calendars and settings; what the other person sees is the shared calendar you chose to share with them.

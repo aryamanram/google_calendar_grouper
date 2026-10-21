@@ -520,12 +520,23 @@ export default function App() {
       if (res.status === 401) throw new Error("The backend rejected that API key.");
       if (!res.ok) throw new Error(`The backend answered with an error (${res.status}). Is the address right?`);
 
-      await send({ type: "SAVE_SETTINGS", backendUrl: url, apiKey: setupKey });
+      const saved = await send({ type: "SAVE_SETTINGS", backendUrl: url, apiKey: setupKey });
       configure({ backendUrl: url, apiKey: setupKey.trim() });
       setConfiguredUrl(url);
       setShowSetup(false);
-      setNotice({ kind: "success", text: "Connected to the backend." });
-      if (userId) load();
+      if (saved?.backendChanged) {
+        // The background worker cleared the sign-in; drop what the old
+        // backend showed so nothing acts on the new one by mistake.
+        setUserId(null);
+        setEmail(null);
+        setGroup(null);
+        setCalendars([]);
+        setSelections({});
+        setNotice({ kind: "success", text: "Connected. Sign in to this backend." });
+      } else {
+        setNotice({ kind: "success", text: "Connected to the backend." });
+        if (userId) load();
+      }
     } catch (err) {
       setNotice({ kind: "error", text: err.message });
     } finally {

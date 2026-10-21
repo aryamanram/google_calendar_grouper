@@ -36,12 +36,12 @@ async function signIn() {
     await chrome.storage.local.set({ userId, email: params.get("email") || null });
     return { ok: true };
   } catch (err) {
-    // Includes closing the window, and the backend refusing the account or
-    // this extension's ID (the flow then ends on an error page, not a redirect).
+    // When the backend refuses the account or this extension's ID, the flow
+    // ends on an error page instead of a redirect, and the user closes the
+    // window. Chrome reports that exactly like cancelling, so one message
+    // covers both.
     const message =
-      /did not approve|closed|cancel/i.test(err.message)
-        ? "Sign-in was cancelled."
-        : "Sign-in didn't finish. Check that this Google account and this extension's ID are allowed on the backend.";
+      "Sign-in didn't finish. If you closed the window on purpose, try again. Otherwise check that this Google account and this extension's ID are allowed on the backend.";
     console.warn("Sign-in failed:", err.message);
     await chrome.storage.local.set({ authError: message });
     return { ok: false, error: message };
@@ -65,9 +65,15 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
 
   if (message.type === "SAVE_SETTINGS") {
-    chrome.storage.local
-      .set({ backendUrl: trimUrl(message.backendUrl), apiKey: message.apiKey?.trim() || null })
-      .then(() => sendResponse({ saved: true }));
+    (async () => {
+      const backendUrl = trimUrl(message.backendUrl);
+      const { backendUrl: previous } = await chrome.storage.local.get("backendUrl");
+      // A different backend doesn't know this account, so sign in again there.
+      const backendChanged = trimUrl(previous) !== backendUrl;
+      if (backendChanged) await chrome.storage.local.remove(["userId", "email", "authError"]);
+      await chrome.storage.local.set({ backendUrl, apiKey: message.apiKey?.trim() || null });
+      sendResponse({ saved: true, backendChanged });
+    })();
     return true;
   }
 

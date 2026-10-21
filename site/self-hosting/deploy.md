@@ -280,7 +280,7 @@ Delete the shared calendar from the popup first if you no longer want it.
 | `redirect_uri_mismatch` at sign-in | Step 3.1: the URI must exactly match `$URL/auth/callback` |
 | Popup: "The backend rejected the API key" | The key in **Settings** doesn't match: `gcloud secrets versions access latest --secret=API_KEY` |
 | Popup: "Can't reach …" when saving settings | The address is wrong, or this extension's ID (shown on the setup screen) isn't in `EXTENSION_ID` |
-| Popup: "Sign-in didn't finish" | The Google account isn't in `ALLOWED_EMAILS`, or this extension's ID isn't in `EXTENSION_ID` |
+| Popup: "Sign-in didn't finish" | The window was closed, or the backend refused: the Google account isn't in `ALLOWED_EMAILS`, or this extension's ID isn't in `EXTENSION_ID`. The backend log says `Sign-in refused for …` for a refused account |
 | Popup has no **Settings** link, or shows a blue "G" icon | It's an old build. Run `npm run build` in `extension/popup` and reload the extension (step 6.1) |
 | `--region: expected one argument` / `No host part in the URL` | The step 0c variables aren't set in this Terminal window. Re-run the 0c block |
 | "Invalid Origin: URIs must not contain a path" | The redirect URI is in *Authorized JavaScript origins*. Move it to *Authorized redirect URIs* (step 3.1) |
