@@ -47,6 +47,7 @@ export default defineConfig({
           text: "Guide",
           items: [
             { text: "Introduction", link: "/guide/introduction" },
+            { text: "Install", link: "/guide/install" },
             { text: "Using Calendar Grouper", link: "/guide/using" },
             { text: "How it works", link: "/guide/how-it-works" },
             { text: "FAQ", link: "/guide/faq" },

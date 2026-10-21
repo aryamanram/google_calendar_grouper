@@ -1,6 +1,7 @@
 const db = require("../models/firestore");
 const { syncGroup } = require("./calendarSync");
 const locks = require("./syncLocks");
+const access = require("./access");
 
 // ---------------------------------------------------------------------------
 // Auto-sync
@@ -27,8 +28,17 @@ async function pollOnce() {
   const summary = { groups: 0, changes: 0, errors: 0 };
   try {
     const groups = await db.listAllGroups();
+    const allowedUsers = new Map(); // userId -> still has access?
     for (const g of groups) {
       if (locks.isBusy(g.id)) continue; // a create/update/webhook is already on it
+
+      // Someone removed from the backend stops syncing. Accounts saved before
+      // emails were recorded have none; keep syncing those.
+      if (!allowedUsers.has(g.userId)) {
+        const user = await db.getUser(g.userId);
+        allowedUsers.set(g.userId, !user?.email || (await access.isAllowed(user.email)));
+      }
+      if (!allowedUsers.get(g.userId)) continue;
       summary.groups++;
 
       try {

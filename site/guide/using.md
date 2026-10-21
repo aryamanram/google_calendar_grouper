@@ -2,12 +2,13 @@
 
 Everything happens in the extension's popup. Click the Calendar Grouper icon in Chrome's toolbar to open it.
 
-## First run
+## Get started
 
-1. The popup asks you to **Connect to your backend**. Enter the backend address and API key you got from whoever runs your backend (or set up yourself), then click **Save**.
-2. Click **Sign in with Google** and approve access in the window that opens. If Google warns that the app isn't verified, click **Advanced**, then **Go to Calendar Grouper**.
+1. [Install the extension](./install).
+2. **Open your invite link** in Chrome. The person who runs your backend sends it to you, and the extension connects by itself. (Running your own backend? Paste its address on the popup's **Connect** screen instead.)
+3. Click the Calendar Grouper icon, then **Sign in with Google**, and approve access in the window that opens. If Google warns that the app isn't verified, click **Advanced**, then **Go to Calendar Grouper**.
 
-Your email appears at the bottom of the popup, with **Settings** to change the backend and **Sign out**.
+Your email appears at the bottom of the popup, with **Settings** to connect to a different backend and **Sign out**.
 
 ## Create your shared calendar
 
@@ -51,6 +52,15 @@ Tick or untick calendars, switch detail levels, or rename the shared calendar, t
 ## If something goes wrong
 
 If a sync fails, the status line turns red and says *Last sync failed*. Hover over it to see the reason, and click **Retry**. Automatic checks also keep retrying in the background.
+
+## Invite people
+
+If you run the backend (you're an owner), the popup shows **People with access**. Click **Manage**:
+
+1. Enter someone's Google account email and click **Add**.
+2. Click **Copy invite link** and send it to them.
+
+They sign in with their own Google account and build their own shared calendar. They can't see your calendars, and you can't see theirs, unless one of you shares a calendar with the other. To remove someone, click **✕**: they're signed out at once, and their shared calendar stops updating.
 
 ## Delete the shared calendar
 

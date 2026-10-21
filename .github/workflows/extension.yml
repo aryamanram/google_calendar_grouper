@@ -1,0 +1,39 @@
+name: Extension
+
+# Builds the extension zip on every change to it, and attaches the zip to
+# each GitHub release (for people who load it by hand instead of using the
+# Chrome Web Store).
+on:
+  push:
+    branches: [main]
+    paths: ["extension/**", "scripts/package-extension.sh", ".github/workflows/extension.yml"]
+  pull_request:
+    paths: ["extension/**", "scripts/package-extension.sh", ".github/workflows/extension.yml"]
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # upload the zip to a release
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: extension/popup/package-lock.json
+      - id: zip
+        run: echo "path=$(./scripts/package-extension.sh | head -n 1)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: extension
+          path: ${{ steps.zip.outputs.path }}
+      - if: github.event_name == 'release'
+        run: gh release upload "${{ github.event.release.tag_name }}" "${{ steps.zip.outputs.path }}" --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}

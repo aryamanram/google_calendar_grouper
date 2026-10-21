@@ -1,16 +1,13 @@
 const crypto = require("crypto");
+const access = require("../services/access");
 
 // ---------------------------------------------------------------------------
 // Request authentication
 //
-// Once the backend has a public URL, anyone who finds it could otherwise call
-// it. Two shared secrets keep it private:
-//
-//   API_KEY      sent by the extension as the `x-api-key` header
-//   TICK_SECRET  sent by Cloud Scheduler as the `x-tick-secret` header
-//
-// When API_KEY isn't set (local development) requests are allowed through.
-// Cloud mode refuses to start without both secrets (see index.js).
+// requireSession   the extension: "Authorization: Bearer <token>", the token
+//                  it got when the person signed in (see routes/auth.js)
+// requireOwner     after requireSession: only the backend's owners
+// requireTickSecret Cloud Scheduler: "x-tick-secret: <TICK_SECRET>"
 // ---------------------------------------------------------------------------
 
 function safeEqual(a, b) {
@@ -20,11 +17,41 @@ function safeEqual(a, b) {
   return x.length === y.length && x.length > 0 && crypto.timingSafeEqual(x, y);
 }
 
-function requireApiKey(req, res, next) {
-  const expected = process.env.API_KEY;
-  if (!expected) return next(); // local development
-  if (safeEqual(req.get("x-api-key"), expected)) return next();
-  res.status(401).json({ error: "Missing or wrong API key", code: "UNAUTHORIZED" });
+function bearerToken(req) {
+  const match = /^Bearer\s+(\S+)$/i.exec(req.get("authorization") || "");
+  return match ? match[1] : null;
+}
+
+async function requireSession(req, res, next) {
+  try {
+    const token = bearerToken(req);
+    const session = await access.lookupSession(token);
+    if (!session) {
+      return res.status(401).json({ error: "Please sign in again.", code: "SIGNED_OUT" });
+    }
+    // Someone removed from the backend loses access straight away.
+    if (!(await access.isAllowed(session.email))) {
+      return res
+        .status(403)
+        .json({ error: "Your account no longer has access to this backend.", code: "NOT_ALLOWED" });
+    }
+
+    req.user = { userId: session.userId, email: session.email, token };
+
+    // Routes read userId from the query or body. Overwrite whatever the
+    // client sent with the signed-in account, so nobody can act as someone
+    // else by changing it.
+    if (req.query) req.query.userId = session.userId;
+    if (req.body && typeof req.body === "object") req.body.userId = session.userId;
+    next();
+  } catch (err) {
+    next(err);
+  }
+}
+
+function requireOwner(req, res, next) {
+  if (req.user && access.isOwner(req.user.email)) return next();
+  res.status(403).json({ error: "Only the backend's owner can do this.", code: "NOT_OWNER" });
 }
 
 function requireTickSecret(req, res, next) {
@@ -33,4 +60,4 @@ function requireTickSecret(req, res, next) {
   res.status(401).json({ error: "Unauthorized" });
 }
 
-module.exports = { requireApiKey, requireTickSecret, safeEqual };
+module.exports = { requireSession, requireOwner, requireTickSecret, safeEqual, bearerToken };

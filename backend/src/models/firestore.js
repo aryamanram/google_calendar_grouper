@@ -24,9 +24,10 @@ function getDb() {
 // Users & Tokens
 // ---------------------------------------------------------------------------
 
-async function saveUserTokens(userId, tokens) {
+async function saveUserTokens(userId, tokens, email) {
   await getDb().collection("users").doc(userId).set(
     {
+      ...(email ? { email: String(email).toLowerCase() } : {}),
       tokens: {
         access_token: tokens.access_token,
         refresh_token: tokens.refresh_token,
@@ -41,6 +42,80 @@ async function saveUserTokens(userId, tokens) {
 async function getUserTokens(userId) {
   const doc = await getDb().collection("users").doc(userId).get();
   return doc.exists ? doc.data().tokens : null;
+}
+
+async function getUser(userId) {
+  const doc = await getDb().collection("users").doc(userId).get();
+  return doc.exists ? { id: doc.id, ...doc.data() } : null;
+}
+
+async function findUsersByEmail(email) {
+  const snap = await getDb()
+    .collection("users")
+    .where("email", "==", String(email).toLowerCase())
+    .get();
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+}
+
+// ---------------------------------------------------------------------------
+// Sessions
+//
+// Each sign-in from the extension gets its own random token. Only its SHA-256
+// hash is stored, as the document ID: sessions/{hash} { userId, email, createdAt }
+// ---------------------------------------------------------------------------
+
+async function saveSession(hash, session) {
+  await getDb()
+    .collection("sessions")
+    .doc(hash)
+    .set({ ...session, createdAt: admin.firestore.FieldValue.serverTimestamp() });
+}
+
+async function getSession(hash) {
+  const doc = await getDb().collection("sessions").doc(hash).get();
+  return doc.exists ? doc.data() : null;
+}
+
+async function deleteSession(hash) {
+  await getDb().collection("sessions").doc(hash).delete();
+}
+
+async function deleteSessionsForUser(userId) {
+  const snap = await getDb().collection("sessions").where("userId", "==", userId).get();
+  const batch = getDb().batch();
+  snap.docs.forEach((d) => batch.delete(d.ref));
+  await batch.commit();
+  return snap.docs.map((d) => d.id);
+}
+
+// ---------------------------------------------------------------------------
+// Members
+//
+// People the backend's owners invited from the extension. Doc ID is the
+// lower-cased email: members/{email} { addedBy, addedAt }
+// ---------------------------------------------------------------------------
+
+async function listMembers() {
+  const snap = await getDb().collection("members").get();
+  return snap.docs.map((d) => {
+    const data = d.data();
+    return {
+      email: d.id,
+      addedBy: data.addedBy || null,
+      addedAt: data.addedAt?.toMillis ? data.addedAt.toMillis() : null,
+    };
+  });
+}
+
+async function addMember(email, addedBy) {
+  await getDb()
+    .collection("members")
+    .doc(String(email).toLowerCase())
+    .set({ addedBy, addedAt: admin.firestore.FieldValue.serverTimestamp() });
+}
+
+async function removeMember(email) {
+  await getDb().collection("members").doc(String(email).toLowerCase()).delete();
 }
 
 // ---------------------------------------------------------------------------
@@ -282,6 +357,17 @@ module.exports = {
   // tokens
   saveUserTokens,
   getUserTokens,
+  getUser,
+  findUsersByEmail,
+  // sessions
+  saveSession,
+  getSession,
+  deleteSession,
+  deleteSessionsForUser,
+  // members
+  listMembers,
+  addMember,
+  removeMember,
   // groups
   createGroup,
   getGroup,

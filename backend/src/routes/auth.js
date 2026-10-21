@@ -2,27 +2,18 @@ const express = require("express");
 const router = express.Router();
 const { createOAuth2Client } = require("../services/googleApi");
 const { saveUserTokens } = require("../models/firestore");
-const { requireApiKey } = require("../middleware/auth");
-const { IS_CLOUD } = require("../runMode");
-const { allowedEmails, extensionIds, EXTENSION_ID_PATTERN } = require("../config");
+const { requireSession } = require("../middleware/auth");
+const access = require("../services/access");
+const { extensionIds, EXTENSION_ID_PATTERN } = require("../config");
 
-// ALLOWED_EMAILS lists the Google accounts that may sign in, e.g.
-// "you@gmail.com partner@gmail.com". Nobody else can store their tokens in
-// your database. Required in cloud mode (index.js refuses to start without
-// it); optional locally.
-function isAllowedEmail(email) {
-  const list = allowedEmails();
-  if (list.length === 0) return !IS_CLOUD; // never open sign-in to everyone in the cloud
-  return list.includes(String(email || "").toLowerCase());
-}
-
-// The extension that started a sign-in, if it's one this backend accepts.
-// Locally, with no EXTENSION_ID set, any well-formed ID is accepted.
+// The extension that started a sign-in, if this backend accepts it. With
+// EXTENSION_ID unset (the default) any copy of the extension may sign in:
+// access is decided by the Google account (owners and invited members), not
+// by which copy of the extension asks. Set EXTENSION_ID to restrict it.
 function acceptedExtensionId(id) {
   if (!EXTENSION_ID_PATTERN.test(String(id || ""))) return null;
   const ids = extensionIds();
-  if (ids.length === 0) return IS_CLOUD ? null : id;
-  return ids.includes(id) ? id : null;
+  return ids.length === 0 || ids.includes(id) ? id : null;
 }
 
 // The scopes we need:
@@ -92,14 +83,19 @@ router.get("/callback", async (req, res) => {
 
     const userId = profile.id; // stable numeric Google ID
 
-    if (!isAllowedEmail(profile.email)) {
-      console.warn(`Sign-in refused for ${profile.email} (not in ALLOWED_EMAILS)`);
+    if (!(await access.isAllowed(profile.email))) {
+      console.warn(`Sign-in refused for ${profile.email} (not an owner or invited member)`);
       return res
         .status(403)
-        .send(page("Account not allowed", "This Google account isn't allowed to use this Calendar Grouper backend."));
+        .send(
+          page(
+            "You haven't been invited yet",
+            `${escapeHtml(profile.email)} doesn't have access to this Calendar Grouper backend. Ask the person who runs it to invite this address, then try again.`
+          )
+        );
     }
 
-    await saveUserTokens(userId, tokens);
+    await saveUserTokens(userId, tokens, profile.email);
     require("../services/googleApi").forgetAuthClient(userId); // use the new tokens
     console.log(`Signed in: ${profile.email}`);
 
@@ -109,7 +105,9 @@ router.get("/callback", async (req, res) => {
     const state = String(req.query.state || "");
     const ext = state.startsWith("ext:") ? acceptedExtensionId(state.slice(4)) : null;
     if (ext) {
-      const fragment = new URLSearchParams({ userId, email: profile.email || "" });
+      // The session token identifies this person on every later request.
+      const token = await access.createSession(userId, profile.email);
+      const fragment = new URLSearchParams({ token, userId, email: profile.email || "" });
       return res.redirect(`https://${ext}.chromiumapp.org/signed-in#${fragment}`);
     }
 
@@ -121,13 +119,25 @@ router.get("/callback", async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// GET /auth/check
-//
-// Lets the extension's setup screen confirm the backend URL and API key work.
+// GET /auth/me: who the session belongs to, and whether they're an owner.
+// POST /auth/logout: end this session.
 // ---------------------------------------------------------------------------
-router.get("/check", requireApiKey, (_req, res) => {
-  res.json({ ok: true });
+router.get("/me", requireSession, (req, res) => {
+  res.json({ userId: req.user.userId, email: req.user.email, isOwner: access.isOwner(req.user.email) });
 });
+
+router.post("/logout", requireSession, async (req, res, next) => {
+  try {
+    await access.endSession(req.user.token);
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+function escapeHtml(text) {
+  return String(text).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+}
 
 function page(title, message) {
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Calendar Grouper</title></head>
@@ -140,7 +150,7 @@ function page(title, message) {
 //
 // Returns the user's calendar list so the popup can show checkboxes.
 // ---------------------------------------------------------------------------
-router.get("/calendars", requireApiKey, async (req, res) => {
+router.get("/calendars", requireSession, async (req, res) => {
   const { userId } = req.query;
   if (!userId) return res.status(400).json({ error: "Missing userId" });
 

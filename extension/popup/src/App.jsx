@@ -3,17 +3,22 @@ import React, { useState, useEffect, useCallback } from "react";
 // ---------------------------------------------------------------------------
 // Config
 //
-// The backend URL and API key are entered on the popup's setup screen and kept
-// in chrome.storage.local, so switching between the local and cloud backend
-// needs no rebuild.
+// Which backend this copy talks to, and this person's session token on it,
+// live in chrome.storage.local (see background.js). The popup keeps a copy
+// here for its requests.
 // ---------------------------------------------------------------------------
 const DEFAULT_BACKEND_URL = "http://localhost:3000";
+const SITE_URL = "https://calendargrouper.com";
 let backendUrl = DEFAULT_BACKEND_URL;
-let apiKey = null;
+let token = null;
 
-function configure(settings) {
-  backendUrl = (settings?.backendUrl || DEFAULT_BACKEND_URL).replace(/\/+$/, "");
-  apiKey = settings?.apiKey || null;
+function configure(state) {
+  backendUrl = (state?.backendUrl || DEFAULT_BACKEND_URL).replace(/\/+$/, "");
+  token = state?.token || null;
+}
+
+function inviteLink() {
+  return `${SITE_URL}/join#${new URLSearchParams({ backend: backendUrl })}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -21,22 +26,19 @@ function configure(settings) {
 // ---------------------------------------------------------------------------
 async function api(path, options = {}) {
   const headers = { "Content-Type": "application/json" };
-  if (apiKey) headers["x-api-key"] = apiKey;
+  if (token) headers.Authorization = `Bearer ${token}`;
 
   let res;
   try {
     res = await fetch(`${backendUrl}${path}`, { ...options, headers });
   } catch {
-    throw new Error(`Can't reach the backend at ${backendUrl}. Is it running?`);
+    throw new Error(`Can't reach the backend at ${backendUrl}. Try again in a moment.`);
   }
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
-    const message =
-      res.status === 401
-        ? "The backend rejected the API key. Open Settings at the bottom to check it."
-        : body.error || `API error ${res.status}`;
-    const err = new Error(message);
+    const err = new Error(body.error || `Backend error ${res.status}`);
     err.status = res.status;
+    err.code = body.code;
     err.body = body;
     throw err;
   }
@@ -233,6 +235,18 @@ const styles = {
     borderRadius: 3,
     userSelect: "all",
   },
+  disclosure: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    width: "100%",
+    background: "none",
+    border: "none",
+    padding: 0,
+    marginBottom: 6,
+    cursor: "pointer",
+    textAlign: "left",
+  },
   accountBar: {
     display: "flex",
     alignItems: "center",
@@ -326,14 +340,21 @@ export default function App() {
   const [email, setEmail] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  // Setup screen: where the backend is, and its API key
+  // Connect screen: which backend this copy uses
   const [showSetup, setShowSetup] = useState(false);
-  const [setupUrl, setSetupUrl] = useState(DEFAULT_BACKEND_URL);
-  const [setupKey, setSetupKey] = useState("");
-  const [checking, setChecking] = useState(false);
-  const [configuredUrl, setConfiguredUrl] = useState(null); // saved backend, if any
+  const [inviteText, setInviteText] = useState("");
+  const [connecting, setConnecting] = useState(false);
+  const [connected, setConnected] = useState(false); // a backend is saved
 
   const [signingIn, setSigningIn] = useState(false);
+
+  // People with access (owners only)
+  const [isOwner, setIsOwner] = useState(false);
+  const [people, setPeople] = useState(null); // { owners: [email], members: [{ email }] }
+  const [peopleOpen, setPeopleOpen] = useState(false);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviting, setInviting] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   // { kind: "info" | "success" | "error", text }
   const [notice, setNotice] = useState(null);
@@ -377,41 +398,58 @@ export default function App() {
     return sel;
   }
 
-  // ------ Settings and sign-in state ------
+  // Forget the signed-in account in the popup (storage is cleared separately).
+  function resetAccount() {
+    setUserId(null);
+    setEmail(null);
+    setGroup(null);
+    setCalendars([]);
+    setSelections({});
+    setIsOwner(false);
+    setPeople(null);
+  }
+
+  // ------ Connection and sign-in state ------
   useEffect(() => {
     if (!inExtension) {
       // Running outside the extension (vite dev server)
       const stored = localStorage.getItem("calGrouper_userId");
+      configure({ token: localStorage.getItem("calGrouper_token") });
       if (stored) {
         setUserId(stored);
         setEmail(localStorage.getItem("calGrouper_email"));
       }
+      setConnected(true);
       setLoading(false);
       return;
     }
 
-    send({ type: "GET_AUTH_STATE" }).then((response) => {
-      configure(response); // before setUserId, which triggers the first API call
-      setSetupUrl(response?.backendUrl || DEFAULT_BACKEND_URL);
-      setSetupKey(response?.apiKey || "");
-      setConfiguredUrl(response?.backendUrl || null);
-      if (!response?.backendUrl) {
-        setShowSetup(true); // first run
-      } else if (response.userId) {
-        setUserId(response.userId);
-        setEmail(response.email);
-      } else if (response.authError) {
-        setNotice({ kind: "error", text: response.authError });
+    send({ type: "GET_STATE" }).then((state) => {
+      configure(state); // before setUserId, which triggers the first API call
+      setConnected(!!state?.backendUrl);
+      if (!state?.backendUrl) {
+        setShowSetup(true); // not connected to a backend yet
+      } else if (state.token) {
+        setUserId(state.userId);
+        setEmail(state.email);
+      } else if (state.authError) {
+        setNotice({ kind: "error", text: state.authError });
       }
       setLoading(false);
     });
 
-    // Sign-in finishes in the background worker. If the popup is still open
-    // when it does, pick up the result.
+    // Joining from an invite page and signing in both finish in the
+    // background worker. If the popup is open when they do, pick them up.
     function onChanged(changes, area) {
       if (area !== "local") return;
-      if (changes.userId?.newValue) {
-        setUserId(changes.userId.newValue);
+      if (changes.backendUrl?.newValue) {
+        configure({ backendUrl: changes.backendUrl.newValue, token: changes.token?.newValue ?? token });
+        setConnected(true);
+        setShowSetup(false);
+      }
+      if (changes.token?.newValue) {
+        configure({ backendUrl, token: changes.token.newValue });
+        setUserId(changes.userId?.newValue || null);
         setEmail(changes.email?.newValue || null);
         setSigningIn(false);
         setNotice(null);
@@ -425,11 +463,24 @@ export default function App() {
     return () => chrome.storage.onChanged.removeListener(onChanged);
   }, []);
 
-  // ------ Load calendars + existing group ------
+  // The backend ended this session (signed out elsewhere, or access removed).
+  function handleSessionLost(err) {
+    if (err.code !== "SIGNED_OUT" && err.code !== "NOT_ALLOWED") return false;
+    if (inExtension) send({ type: "SIGN_OUT" });
+    resetAccount();
+    setNotice({
+      kind: "error",
+      text: err.code === "NOT_ALLOWED" ? err.message : "You were signed out. Sign in again to continue.",
+    });
+    return true;
+  }
+
+  // ------ Load calendars, existing group, and (for owners) people ------
   const load = useCallback(async () => {
     if (!userId) return;
     try {
-      const [calRes, groupRes] = await Promise.all([
+      const [me, calRes, groupRes] = await Promise.all([
+        api("/auth/me"),
         api(`/auth/calendars?userId=${userId}`),
         api(`/groups?userId=${userId}`),
       ]);
@@ -438,8 +489,10 @@ export default function App() {
       setGroup(existing);
       if (existing) setGroupName(existing.name);
       setSelections(selectionsFor(calRes.calendars, existing));
+      setIsOwner(me.isOwner);
+      if (me.isOwner) setPeople(await api("/people"));
     } catch (err) {
-      setNotice({ kind: "error", text: err.message });
+      if (!handleSessionLost(err)) setNotice({ kind: "error", text: err.message });
     }
   }, [userId]);
 
@@ -488,59 +541,72 @@ export default function App() {
   }
 
   function handleLogout() {
-    send({ type: "LOGOUT" }).then(() => {
-      setUserId(null);
-      setEmail(null);
-      setGroup(null);
-      setCalendars([]);
+    send({ type: "SIGN_OUT" }).then(() => {
+      resetAccount();
       setNotice(null);
     });
   }
 
-  // Save the backend URL and API key, after checking they work.
-  async function handleSaveSetup(e) {
+  // Connect using a pasted invite link (or a backend address).
+  async function handleConnect(e) {
     e?.preventDefault();
-    const url = setupUrl.trim().replace(/\/+$/, "");
-    if (!/^https?:\/\/.+/.test(url)) {
-      setNotice({ kind: "error", text: "Enter the backend's full address, starting with https://" });
-      return;
-    }
-    setChecking(true);
+    setConnecting(true);
     setNotice(null);
     try {
-      const headers = setupKey.trim() ? { "x-api-key": setupKey.trim() } : {};
-      let res;
-      try {
-        res = await fetch(`${url}/auth/check`, { headers });
-      } catch {
-        throw new Error(
-          `Can't reach ${url}. Check the address, and that this extension's ID is in the backend's EXTENSION_ID.`
-        );
-      }
-      if (res.status === 401) throw new Error("The backend rejected that API key.");
-      if (!res.ok) throw new Error(`The backend answered with an error (${res.status}). Is the address right?`);
-
-      const saved = await send({ type: "SAVE_SETTINGS", backendUrl: url, apiKey: setupKey });
-      configure({ backendUrl: url, apiKey: setupKey.trim() });
-      setConfiguredUrl(url);
+      const result = await send({ type: "CONNECT", text: inviteText });
+      if (!result?.ok) throw new Error(result?.error || "Couldn't connect.");
+      configure({ backendUrl: result.backendUrl, token: result.backendChanged ? null : token });
+      setConnected(true);
       setShowSetup(false);
-      if (saved?.backendChanged) {
-        // The background worker cleared the sign-in; drop what the old
-        // backend showed so nothing acts on the new one by mistake.
-        setUserId(null);
-        setEmail(null);
-        setGroup(null);
-        setCalendars([]);
-        setSelections({});
-        setNotice({ kind: "success", text: "Connected. Sign in to this backend." });
+      setInviteText("");
+      if (result.backendChanged) {
+        resetAccount();
+        setNotice({ kind: "success", text: "Connected. Now sign in with Google." });
       } else {
-        setNotice({ kind: "success", text: "Connected to the backend." });
-        if (userId) load();
+        setNotice({ kind: "success", text: "Already connected to this backend." });
       }
     } catch (err) {
       setNotice({ kind: "error", text: err.message });
     } finally {
-      setChecking(false);
+      setConnecting(false);
+    }
+  }
+
+  async function handleInvite(e) {
+    e?.preventDefault();
+    if (!inviteEmail.trim() || inviting) return;
+    setInviting(true);
+    setNotice(null);
+    try {
+      setPeople(await api("/people", { method: "POST", body: JSON.stringify({ email: inviteEmail.trim() }) }));
+      setNotice({
+        kind: "success",
+        text: `${inviteEmail.trim()} can now sign in. Send them the invite link.`,
+      });
+      setInviteEmail("");
+    } catch (err) {
+      if (!handleSessionLost(err)) setNotice({ kind: "error", text: err.message });
+    } finally {
+      setInviting(false);
+    }
+  }
+
+  async function handleRemovePerson(address) {
+    try {
+      setPeople(await api(`/people/${encodeURIComponent(address)}`, { method: "DELETE" }));
+      setNotice({ kind: "success", text: `Removed ${address}. Their shared calendar stops updating.` });
+    } catch (err) {
+      if (!handleSessionLost(err)) setNotice({ kind: "error", text: err.message });
+    }
+  }
+
+  async function handleCopyInvite() {
+    try {
+      await navigator.clipboard.writeText(inviteLink());
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setNotice({ kind: "info", text: inviteLink() });
     }
   }
 
@@ -703,7 +769,7 @@ export default function App() {
     }
   }
 
-  // ------ Render: setup and login screens ------
+  // ------ Render: connect and sign-in screens ------
   if (loading) return null;
 
   const header = (
@@ -718,42 +784,30 @@ export default function App() {
       <div style={styles.container}>
         {header}
         {notice && <div style={styles.notice(notice.kind)}>{notice.text}</div>}
-        <form style={styles.section} onSubmit={handleSaveSetup}>
-          <div style={{ ...styles.sectionLabel, marginTop: 4 }}>Connect to your backend</div>
-          <p style={{ ...styles.loginText, textAlign: "left" }}>
-            Get these from whoever runs your Calendar Grouper backend.
+        <form style={styles.section} onSubmit={handleConnect}>
+          <div style={{ ...styles.sectionLabel, marginTop: 4 }}>Connect</div>
+          <p style={{ ...styles.loginText, textAlign: "left", lineHeight: 1.5 }}>
+            Open the invite link you were sent, and this connects by itself. Or paste the link here.
           </p>
 
-          <label style={styles.fieldLabel} htmlFor="backend-url">Backend address</label>
+          <label style={styles.fieldLabel} htmlFor="invite">Invite link</label>
           <input
-            id="backend-url"
+            id="invite"
             style={{ ...styles.nameInput, marginBottom: 0 }}
-            value={setupUrl}
-            onChange={(e) => setSetupUrl(e.target.value)}
-            placeholder="https://calendar-grouper-….run.app"
+            value={inviteText}
+            onChange={(e) => setInviteText(e.target.value)}
+            placeholder="https://calendargrouper.com/join#…"
             autoFocus
           />
-
-          <label style={styles.fieldLabel} htmlFor="api-key">API key</label>
-          <input
-            id="api-key"
-            type="password"
-            style={{ ...styles.nameInput, marginBottom: 0 }}
-            value={setupKey}
-            onChange={(e) => setSetupKey(e.target.value)}
-            placeholder="Not needed for a local backend"
-            autoComplete="off"
-          />
-
-          {inExtension && (
-            <div style={{ ...styles.hint, marginTop: 12 }}>
-              This extension's ID is <span style={styles.code}>{chrome.runtime.id}</span>. The backend's{" "}
-              <span style={styles.code}>EXTENSION_ID</span> setting must include it.
-            </div>
-          )}
+          <div style={styles.hint}>
+            Running your own backend? Paste its address instead. No invite yet?{" "}
+            <a href={`${SITE_URL}/guide/introduction`} target="_blank" rel="noreferrer" style={{ color: "#1a73e8" }}>
+              How Calendar Grouper works
+            </a>
+          </div>
 
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 14 }}>
-            {configuredUrl && (
+            {connected && (
               <button
                 type="button"
                 style={styles.btnText}
@@ -765,8 +819,12 @@ export default function App() {
                 Cancel
               </button>
             )}
-            <button type="submit" style={{ ...styles.btnPrimary, opacity: checking ? 0.6 : 1 }} disabled={checking}>
-              {checking ? "Checking…" : "Save"}
+            <button
+              type="submit"
+              style={{ ...styles.btnPrimary, opacity: connecting || !inviteText.trim() ? 0.6 : 1 }}
+              disabled={connecting || !inviteText.trim()}
+            >
+              {connecting ? "Connecting…" : "Connect"}
             </button>
           </div>
         </form>
@@ -791,7 +849,9 @@ export default function App() {
         </div>
         {inExtension && (
           <div style={styles.accountBar}>
-            <span style={{ flex: 1 }}>Backend: {backendUrl.replace(/^https?:\/\//, "")}</span>
+            <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              Connected to {backendUrl.replace(/^https?:\/\//, "")}
+            </span>
             <button style={{ ...styles.btnText, padding: 0, fontSize: 11 }} onClick={() => setShowSetup(true)}>
               Change
             </button>
@@ -922,6 +982,53 @@ export default function App() {
               </button>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* People with access (owners) */}
+      {isOwner && people && (
+        <div style={{ ...styles.section, ...styles.divider, paddingTop: 10 }}>
+          <button style={styles.disclosure} onClick={() => setPeopleOpen((o) => !o)} aria-expanded={peopleOpen}>
+            <span style={styles.sectionLabel}>People with access · {people.owners.length + people.members.length}</span>
+            <span style={{ color: "#5f6368", fontSize: 11 }}>{peopleOpen ? "Hide" : "Manage"}</span>
+          </button>
+          {peopleOpen && (
+            <>
+              <p style={{ ...styles.hint, marginTop: 0, marginBottom: 8 }}>
+                People you add can sign in with their own Google account and share their own calendars. They
+                never see yours unless you share it with them.
+              </p>
+              <form style={{ display: "flex", gap: 8 }} onSubmit={handleInvite}>
+                <input
+                  style={styles.input}
+                  type="email"
+                  placeholder="friend@gmail.com"
+                  value={inviteEmail}
+                  onChange={(e) => setInviteEmail(e.target.value)}
+                />
+                <button type="submit" style={{ ...styles.btnPrimary, opacity: inviting ? 0.6 : 1 }} disabled={inviting}>
+                  {inviting ? "Adding…" : "Add"}
+                </button>
+              </form>
+              {people.owners.map((addr) => (
+                <div key={addr} style={styles.shareChip}>
+                  <span style={styles.shareChipEmail}>{addr}</span>
+                  <span style={styles.legendDefault}>owner</span>
+                </div>
+              ))}
+              {people.members.map((m) => (
+                <div key={m.email} style={styles.shareChip}>
+                  <span style={styles.shareChipEmail}>{m.email}</span>
+                  <button style={styles.removeBtn} onClick={() => handleRemovePerson(m.email)} title="Remove access">
+                    ✕
+                  </button>
+                </div>
+              ))}
+              <button style={{ ...styles.btnText, padding: "8px 0 0" }} onClick={handleCopyInvite}>
+                {copied ? "✓ Invite link copied" : "Copy invite link"}
+              </button>
+            </>
+          )}
         </div>
       )}
 

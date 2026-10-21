@@ -70,53 +70,48 @@ gcloud projects add-iam-policy-binding $PROJECT_ID \
 
 ## 1 — Secrets
 
-Three secrets go in **Secret Manager**, never in code or in the image:
+Two secrets go in **Secret Manager**, never in code or in the image:
 
 | Secret | What it is |
 |---|---|
 | `GOOGLE_CLIENT_SECRET` | Your OAuth client secret (already in `backend/.env`) |
-| `API_KEY` | A new random key the extension sends with every request, so only you can control the backend |
 | `TICK_SECRET` | A new random key Cloud Scheduler sends, so only it can trigger syncs |
 
+People don't need a key: each person signs in with Google, and the backend gives their extension its own session.
+
 ```bash
-API_KEY=$(openssl rand -hex 32)
 TICK_SECRET=$(openssl rand -hex 32)
 
-printf %s "$API_KEY"     | gcloud secrets create API_KEY --data-file=-
 printf %s "$TICK_SECRET" | gcloud secrets create TICK_SECRET --data-file=-
 grep '^GOOGLE_CLIENT_SECRET=' backend/.env | cut -d= -f2- | tr -d '\n' \
   | gcloud secrets create GOOGLE_CLIENT_SECRET --data-file=-
 
-for s in API_KEY TICK_SECRET GOOGLE_CLIENT_SECRET; do
+for s in TICK_SECRET GOOGLE_CLIENT_SECRET; do
   gcloud secrets add-iam-policy-binding $s \
     --member=serviceAccount:$SA --role=roles/secretmanager.secretAccessor
 done
-
-echo "Save this API key in your password manager: $API_KEY"
 ```
-Keep the API key: the extension needs it in step 6. You can always read it back with `gcloud secrets versions access latest --secret=API_KEY`.
 
-The backend runs as the `calendar-grouper-backend` service account you made in Phase 3. It already has Firestore access, and the loop above lets it read these three secrets. The JSON key file stays on your laptop; Cloud Run doesn't use it.
+The backend runs as the `calendar-grouper-backend` service account you made in Phase 3. It already has Firestore access, and the loop above lets it read these two secrets. The JSON key file stays on your laptop; Cloud Run doesn't use it.
 
 ---
 
 ## 2 — Deploy the backend
 ```bash
-EXT_ID=$(grep '^EXTENSION_ID=' backend/.env | cut -d= -f2-)
 CLIENT_ID=$(grep '^GOOGLE_CLIENT_ID=' backend/.env | cut -d= -f2-)
 
 gcloud run deploy $SERVICE --source backend --region $REGION \
   --service-account $SA --allow-unauthenticated \
   --min-instances 0 --max-instances 1 --cpu 1 --memory 512Mi --timeout 900 \
-  --set-env-vars "RUN_MODE=cloud,FIRESTORE_PROJECT_ID=$PROJECT_ID,GOOGLE_CLIENT_ID=$CLIENT_ID,GOOGLE_REDIRECT_URI=$URL/auth/callback,BACKEND_URL=$URL,EXTENSION_ID=$EXT_ID,ALLOWED_EMAILS=you@gmail.com" \
-  --set-secrets "GOOGLE_CLIENT_SECRET=GOOGLE_CLIENT_SECRET:latest,API_KEY=API_KEY:latest,TICK_SECRET=TICK_SECRET:latest"
+  --set-env-vars "RUN_MODE=cloud,FIRESTORE_PROJECT_ID=$PROJECT_ID,GOOGLE_CLIENT_ID=$CLIENT_ID,GOOGLE_REDIRECT_URI=$URL/auth/callback,BACKEND_URL=$URL,ALLOWED_EMAILS=you@gmail.com" \
+  --set-secrets "GOOGLE_CLIENT_SECRET=GOOGLE_CLIENT_SECRET:latest,TICK_SECRET=TICK_SECRET:latest"
 ```
-- Replace `you@gmail.com` with your Google account. It's the only account allowed to sign in. To let someone else use your backend later, see [Adding another person](#adding-another-person).
+- Replace `you@gmail.com` with your Google account. `ALLOWED_EMAILS` lists the backend's **owners**: they can sign in and invite other people from the extension (see [Inviting people](#inviting-people)). To have two owners, separate the emails with a space.
 - If it asks to create an Artifact Registry repository, answer **Y**.
 - The first build takes 2–4 minutes.
 
 What the flags mean:
-- `--allow-unauthenticated`: the extension and Google's sign-in page must be able to reach the backend. The API key and tick secret are what keep it private.
+- `--allow-unauthenticated`: the extension and Google's sign-in page must be able to reach the backend. What keeps it private: only owners and people they invite can sign in, every request needs that person's session, and syncs need the tick secret.
 - `--max-instances 1`: normally one copy of the backend, which also caps cost. Cloud Run can briefly run a second copy, for example during a deploy. A lock stored in Firestore (`syncLocks`) makes sure only one copy ever syncs a given calendar at a time.
 - `--min-instances 0`: nothing runs, and nothing is billed, between requests.
 - `--timeout 900`: gives a large first copy up to 15 minutes.
@@ -194,12 +189,8 @@ You want a **200** every 2 minutes. A **401** means the tick secret doesn't matc
    (cd extension/popup && npm run build)
    ```
    Then click **↻** on the extension's card in `chrome://extensions`.
-2. Open the popup. If it shows **Connect to your backend**, fill it in. Otherwise click **Settings** at the bottom.
-   - **Backend address:** the output of `echo $URL`
-   - **API key:** the output of `gcloud secrets versions access latest --secret=API_KEY`
-
-   Click **Save**. The popup checks both before saving.
-3. If it asks you to sign in, click **Sign in with Google**. Your shared calendar and its settings appear.
+2. Open the popup. On the **Connect** screen (or **Settings** at the bottom), paste the output of `echo $URL` and click **Connect**.
+3. Click **Sign in with Google**. Your shared calendar and its settings appear.
 
 ---
 
@@ -229,38 +220,34 @@ Or Cloud console → Cloud Run → `calendar-grouper` → **Logs**.
 
 **Working on the code locally again:**
 1. Pause the cloud sync: `gcloud scheduler jobs pause $SERVICE-tick --location $REGION`
-2. Point the extension back at your laptop: popup → **Settings** → address `http://localhost:3000`, API key empty.
+2. Point the extension at your laptop: popup → **Settings** → paste `http://localhost:3000` → **Connect**, then sign in.
 3. Start `npm run dev`.
 
-When you're done, stop the local server, put the cloud address and API key back in **Settings**, and run `gcloud scheduler jobs resume $SERVICE-tick --location $REGION`.
+When you're done, stop the local server, connect the extension to `$URL` again, and run `gcloud scheduler jobs resume $SERVICE-tick --location $REGION`.
 
 **Changing how often it checks:** edit the schedule, for example every 5 minutes:
 ```bash
 gcloud scheduler jobs update http $SERVICE-tick --location $REGION --schedule "*/5 * * * *"
 ```
 
-**Rotating the API key:**
+**Upgrading a backend deployed before invites (October 2026):** the extension no longer uses an API key or a fixed extension ID. Remove both from the service, then sign in again from the popup:
 ```bash
-printf %s "$(openssl rand -hex 32)" | gcloud secrets versions add API_KEY --data-file=-
-gcloud run services update $SERVICE --region $REGION --update-labels key-rotated=$(date +%s)  # new revision reads the new key
+gcloud run services update $SERVICE --region $REGION --remove-env-vars EXTENSION_ID --remove-secrets API_KEY
 ```
-Then enter the new key in the popup's **Settings**, on every copy of the extension that uses this backend.
 
-### Adding another person
+**Signing everyone out:** delete the `sessions` collection in Firestore Studio. Everyone signs in again the next time they open the popup.
 
-Someone else can use your backend for their own calendars, for example a partner who wants to share their schedule with you too. Their calendars and shared calendar stay separate from yours. You pay for the backend; the extra cost is negligible.
+### Inviting people
 
-1. **Give them the extension.** Either they clone this repo and build it (Phase 6 of [local setup](./setup.md)), or you zip your `extension/` folder, without `popup/node_modules`, and send it. They load it from `chrome://extensions` → **Developer mode** → **Load unpacked**.
-2. **They open the popup.** It shows **Connect to your backend** and **this extension's ID**. They send you that ID.
-3. **Allow their account and their extension.** Use spaces between values: commas would split the setting in two.
-   ```bash
-   gcloud run services update $SERVICE --region $REGION \
-     --update-env-vars "^|^ALLOWED_EMAILS=you@gmail.com them@gmail.com|EXTENSION_ID=YOUR_EXTENSION_ID THEIR_EXTENSION_ID"
-   ```
-   (`^|^` tells gcloud to separate variables with `|` instead of commas.) Check the result with `gcloud run services describe $SERVICE --region $REGION --format=yaml | grep -A1 -E 'ALLOWED_EMAILS|EXTENSION_ID'`.
-4. **Give them the backend address and API key,** in person or through a password manager, not by plain email or chat. They enter both, click **Save**, then **Sign in with Google**. They'll see the "Google hasn't verified this app" warning: **Advanced → Go to Calendar Grouper**.
+Friends, a partner or family can use your backend for their own calendars. Their calendars and settings stay separate from yours, and you pay for the backend; each extra person adds very little.
 
-Anyone with the API key and an allowed account can use the backend, so only add people you trust. To remove someone, update both settings without them and [rotate the API key](#everyday-operations).
+1. In the popup, open **People with access → Manage**, enter their Google account's email, and click **Add**.
+2. Click **Copy invite link** and send it to them. The link only tells their extension where your backend is; it isn't a password. Only the people you added can sign in.
+3. They install the extension ([Install](/guide/install)), open the link in Chrome, and click **Sign in with Google**. They'll see Google's "unverified app" warning: **Advanced → Go to Calendar Grouper**.
+
+To remove someone, click **✕** next to them. They're signed out at once, and their shared calendar stops updating (it stays in their Google account until they delete it).
+
+Google caps an unverified app at 100 people. `ALLOWED_EMAILS` owners can't be removed from the popup; change the variable instead.
 
 **Shutting it all down:**
 ```bash
@@ -276,16 +263,16 @@ Delete the shared calendar from the popup first if you no longer want it.
 | Symptom | Check |
 |---|---|
 | Deploy fails with a permissions error during the build | Step 0e |
-| Deploy succeeds but `/health` fails, and logs say `Cloud mode needs these environment variables` | A variable from step 2 was empty. `echo $CLIENT_ID $EXT_ID $URL` and redeploy |
+| Deploy succeeds but `/health` fails, and logs say `Cloud mode needs these environment variables` | A variable from step 2 was empty. `echo $CLIENT_ID $URL` and redeploy |
 | `redirect_uri_mismatch` at sign-in | Step 3.1: the URI must exactly match `$URL/auth/callback` |
-| Popup: "The backend rejected the API key" | The key in **Settings** doesn't match: `gcloud secrets versions access latest --secret=API_KEY` |
-| Popup: "Can't reach …" when saving settings | The address is wrong, or this extension's ID (shown on the setup screen) isn't in `EXTENSION_ID` |
-| Popup: "Sign-in didn't finish" | The window was closed, or the backend refused: the Google account isn't in `ALLOWED_EMAILS`, or this extension's ID isn't in `EXTENSION_ID`. The backend log says `Sign-in refused for …` for a refused account |
+| Popup: "Can't reach …" when connecting | The address is wrong, or the backend is down: `curl $URL/health` |
+| Popup: "Sign-in didn't finish" | The window was closed, or the account isn't an owner or invited. The backend log says `Sign-in refused for …` for a refused account |
+| Popup: "You were signed out" | The session was ended (signed out, or removed and re-added). Sign in again |
 | Popup has no **Settings** link, or shows a blue "G" icon | It's an old build. Run `npm run build` in `extension/popup` and reload the extension (step 6.1) |
 | `--region: expected one argument` / `No host part in the URL` | The step 0c variables aren't set in this Terminal window. Re-run the 0c block |
 | "Invalid Origin: URIs must not contain a path" | The redirect URI is in *Authorized JavaScript origins*. Move it to *Authorized redirect URIs* (step 3.1) |
 | Publish says homepage / privacy policy URL required | Step 3.2 (Branding) |
-| Popup shows a CORS error in its console | `EXTENSION_ID` doesn't include the ID on the extension card |
+| Popup shows a CORS error in its console | `EXTENSION_ID` is set on the backend and doesn't include this copy's ID. Remove the variable unless you need it |
 | Logs: `invalid_grant` | The sign-in token is gone or expired. Make sure the app is **In production** (step 3.2), then repeat step 4 |
 | Events stop appearing | Logs for `Auto-sync failed`; Cloud Scheduler → `calendar-grouper-tick` → last run status |
 | Duplicate events | The local and cloud backends both ran. Stop the local one; the Delete button plus Create rebuilds a clean copy |
