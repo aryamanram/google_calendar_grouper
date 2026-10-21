@@ -1,71 +1,10 @@
-# Calendar Grouper — Clean Restart Guide
+# Local setup
 
-Two parts: **Part 1** tears down everything from the first attempt. **Part 2** rebuilds from zero, with exact click paths for the current Google Cloud console. Each phase ends with a checkpoint — don't move on until it passes.
+This guide runs your own copy of Calendar Grouper on your computer: a Google Cloud project, the backend on `localhost`, and the extension loaded in Chrome. It takes about 30 minutes. Each phase ends with a checkpoint; don't move on until it passes.
 
-If a screen looks different from what's described here (Google changes the console often), screenshot it and send it over before guessing.
+When you're done, [the deploy guide](./deploy.md) moves the backend to Google Cloud so it keeps syncing with your computer off.
 
----
-
-# Part 1 — Delete what you made
-
-The Google Cloud project is a container for everything you built there: Firestore, the OAuth consent screen, the OAuth client, and the service account and its key. Deleting the project removes all of them at once, so you don't need to delete each piece separately.
-
-### 1.1 Delete the Google Cloud project
-
-1. Go to https://console.cloud.google.com
-2. In the top bar, click the **project picker** and select `calendar-grouper`.
-3. Open the **☰ menu** (top left) → **IAM & Admin** → **Settings**.
-4. At the top of the page, click **Shut down**.
-5. Type the **project ID** exactly as shown in the dialog, then click **Shut down**.
-
-Two things to know about this:
-- The project sits in a 30-day "pending deletion" state before it's gone for good. Everything in it stops working right away, including the old key and OAuth client.
-- **A deleted project's ID can never be reused.** When you create the new project, Google will suggest an ID with a suffix (for example `calendar-grouper-482913`). That's fine; just use the new ID wherever this guide says "project ID."
-
-### 1.2 Revoke the old app's access to your Google account
-
-1. Go to https://myaccount.google.com/connections
-2. Find **Calendar Grouper** in the list (only there if you finished sign-in last time).
-3. Click it → **Delete all connections you have with Calendar Grouper** → **Confirm**.
-
-### 1.3 Remove any merged calendar (only if one was created)
-
-1. In Google Calendar, look under **My calendars** / **Other calendars** for "My full schedule" (or whatever you named it).
-2. If it exists: hover over it → **⋮** → **Settings and sharing** → scroll to the bottom → **Remove calendar** → **Delete**.
-
-### 1.4 Clean up locally
-
-In your `google_calendar_grouper` repo:
-
-```bash
-# from the repo root
-rm -f backend/service-account-key.json
-rm -f backend/.env
-rm -rf backend/node_modules extension/popup/node_modules extension/popup/dist
-```
-
-**Keep the code.** Nothing in the code is tied to the old project, so there's no need to delete it. Just replace these two files with the new versions:
-- `extension/popup/vite.config.js` (bug fix: the popup would have loaded blank)
-- `SETUP_GUIDE.md` (this file)
-
-### 1.5 Make sure the old key was never pushed
-
-```bash
-git log --all --oneline -- backend/service-account-key.json backend/.env
-```
-
-- **No output**: good, neither file was ever committed.
-- **Any output**: the old key is in your git history. It no longer works because the project is deleted, but tell me and we'll scrub it from the history anyway.
-
-### 1.6 Remove the old extension from Chrome (if you loaded it)
-
-Go to `chrome://extensions` → find **Calendar Grouper** → **Remove**.
-
-**✅ Checkpoint:** The project shows as pending deletion, the local key and `.env` are gone, and `git status` is clean apart from the two replaced files.
-
----
-
-# Part 2 — Set it up again
+Google changes its console often. If a screen doesn't match what's described here, [open an issue](https://github.com/aryamanram/google_calendar_grouper/issues) with a screenshot.
 
 ## Phase 0 — Prerequisites
 
@@ -79,7 +18,7 @@ You need **v20 or higher**. If you don't have it, install the LTS release from h
 
 ---
 
-## Phase 1 — New project, APIs, and Firestore
+## Phase 1 — Project, APIs, and Firestore
 
 ### 1a — Create the project
 1. https://console.cloud.google.com → **project picker** (top bar) → **New project**.
@@ -162,9 +101,9 @@ If you skip this, sign-in will fail with an "access blocked" error.
    ```bash
    git status
    ```
-   The key must **not** appear in the output. If it does, stop and tell me.
+   The key must **not** appear in the output. If it does, stop: `.gitignore` isn't working, and committing the key would expose your database.
 
-If key creation is blocked by an organization policy, tell me. This is rare on a personal Gmail account.
+Key creation can be blocked by an organization policy on Workspace accounts. This is rare on a personal Gmail account.
 
 **✅ Checkpoint:** The key is in `backend/`, and git ignores it.
 
@@ -185,7 +124,7 @@ GOOGLE_CLIENT_SECRET=<Client secret from 2d>
 GOOGLE_REDIRECT_URI=http://localhost:3000/auth/callback
 
 GOOGLE_APPLICATION_CREDENTIALS=./service-account-key.json
-FIRESTORE_PROJECT_ID=<NEW project ID from 1a>
+FIRESTORE_PROJECT_ID=<project ID from 1a>
 
 PORT=3000
 BACKEND_URL=http://localhost:3000
@@ -251,7 +190,7 @@ Then load it in Chrome:
 4. Paste it into `backend/.env` as `EXTENSION_ID=<id>`.
 5. In the backend terminal, press **Ctrl+C**, then run `npm run dev` again to restart it with the new value.
 
-If the popup opens blank, right-click inside it → **Inspect** → **Console** tab, and send me what it says.
+If the popup opens blank, right-click inside it → **Inspect** → **Console** tab to see the error.
 
 **✅ Checkpoint:** The extension is loaded, its ID is in `.env`, and the backend has been restarted.
 
@@ -312,13 +251,13 @@ The automatic handoff from sign-in to the extension isn't built yet, so you'll s
 
 ## Heads-up: the 7-day token limit
 
-While the app is in **Testing** mode, Google expires refresh tokens after about 7 days. If sync suddenly stops working a week from now, that's the cause, not a code bug. Re-run Phase 5 to sign in again. Publishing the app (part of [DEPLOY.md](DEPLOY.md), step 3) removes the limit.
+While the app is in **Testing** mode, Google expires refresh tokens after about 7 days. If sync suddenly stops working a week later, that's the cause, not a code bug. Re-run Phase 5 to sign in again. Publishing the app (part of [the deploy guide](./deploy.md), step 3) removes the limit.
 
 ---
 
 ## Next: run it with your computer off
 
-Everything above runs on your laptop. To keep syncing while it's off, follow **[DEPLOY.md](DEPLOY.md)**. It moves the backend to Cloud Run with a 2-minute Cloud Scheduler check, and fits in Google Cloud's free tier.
+Everything above runs on your laptop. To keep syncing while it's off, follow **[the deploy guide](./deploy.md)**. It moves the backend to Cloud Run with a 2-minute Cloud Scheduler check, and fits in Google Cloud's free tier.
 
 ---
 
@@ -328,9 +267,9 @@ Everything above runs on your laptop. To keep syncing while it's off, follow **[
 |---|---|---|
 | `redirect_uri_mismatch` | 2d | The redirect URI matches exactly: http, port 3000, no trailing slash |
 | "Access blocked" at sign-in | 2c | Your email is listed under Test users |
-| Backend crashes on start | 4 | The key file path and the **new** project ID in `.env` |
+| Backend crashes on start | 4 | The key file path and the project ID in `.env` |
 | Calendar API 403 / insufficient scopes | 5 | The Calendar checkbox was ticked during consent; sign in again |
-| Blank popup | 6 | Inspect the popup → Console; send me the error |
+| Blank popup | 6 | Inspect the popup → Console for the error |
 | CORS error in popup | 6 | `EXTENSION_ID` matches the loaded extension, and the backend was restarted |
 | "Watch not registered" | 8 | Expected on localhost; auto-sync covers it |
 | New events don't appear | 8 | Wait 2 minutes or click **Sync now**; check the backend log for "Auto-sync failed" |

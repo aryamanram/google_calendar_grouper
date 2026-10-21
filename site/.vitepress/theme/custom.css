@@ -1,0 +1,93 @@
+/* Google Calendar's palette and type, so the site feels like part of the
+   product it extends. Roboto is bundled (no third-party font requests). */
+
+:root {
+  --vp-font-family-base: "Roboto", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --vp-font-family-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+
+  --vp-c-brand-1: #1a73e8;
+  --vp-c-brand-2: #1967d2;
+  --vp-c-brand-3: #1a73e8;
+  --vp-c-brand-soft: rgba(26, 115, 232, 0.12);
+
+  --vp-home-hero-name-color: var(--vp-c-brand-1);
+  --vp-button-brand-bg: #1a73e8;
+  --vp-button-brand-hover-bg: #1967d2;
+  --vp-button-brand-active-bg: #185abc;
+}
+
+.dark {
+  --vp-c-brand-1: #8ab4f8;
+  --vp-c-brand-2: #aecbfa;
+  --vp-c-brand-3: #1a73e8;
+  --vp-c-brand-soft: rgba(138, 180, 248, 0.16);
+  --vp-button-brand-bg: #8ab4f8;
+  --vp-button-brand-text: #202124;
+  --vp-button-brand-hover-bg: #aecbfa;
+  --vp-button-brand-hover-text: #202124;
+  --vp-button-brand-active-bg: #d2e3fc;
+  --vp-button-brand-active-text: #202124;
+}
+
+/* Calendar-style weights: regular headings, medium for emphasis. */
+.vp-doc h1,
+.vp-doc h2,
+.VPHero .name,
+.VPHero .text {
+  font-weight: 400;
+  letter-spacing: -0.01em;
+}
+.vp-doc h3 {
+  font-weight: 500;
+}
+.VPHero .text {
+  max-width: 560px;
+}
+
+/* Feature cards: flat, hairline borders, like Calendar's dialogs. */
+.VPFeature {
+  border-radius: 12px !important;
+}
+
+/* Hero illustration. The SVG has no intrinsic size, so give it a box. */
+.VPHero .image-container {
+  width: 300px;
+  height: 225px;
+}
+.VPHero .image-src {
+  width: 100%;
+  max-width: 100%;
+  max-height: none;
+}
+.VPHero .image-bg {
+  display: none;
+}
+@media (max-width: 959px) {
+  /* The default theme pulls the image up under the nav, where this
+     illustration would overlap the title. */
+  .VPHero .image {
+    margin: 0 0 24px;
+  }
+}
+@media (min-width: 960px) {
+  .VPHero .image-container {
+    width: 480px;
+    height: 360px;
+  }
+}
+
+/* Calendar-colored dots used in the guide */
+.cal-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  vertical-align: 0;
+  margin-right: 4px;
+}
+.cal-dot.full {
+  background: #4285f4;
+}
+.cal-dot.busy {
+  background: #ea4335;
+}

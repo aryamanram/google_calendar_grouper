@@ -1,4 +1,4 @@
-# Deploy: keep syncing with your computer off
+# Deploy to Google Cloud
 
 This moves the backend from your laptop to **Google Cloud Run**. A **Cloud Scheduler** job wakes it every 2 minutes to check for new events. The extension stays exactly as it is and simply points at the cloud URL instead of `localhost`.
 
@@ -9,12 +9,12 @@ This moves the backend from your laptop to **Google Cloud Run**. A **Cloud Sched
 | Backend (sync engine) | Cloud Run, wakes on demand | Nobody touches it |
 | Auto-sync timer | Cloud Scheduler, every 2 min | Nobody touches it |
 | Database (settings, event map) | Firestore, unchanged | Nobody touches it |
-| Shared calendar | Google Calendar | Your girlfriend subscribes to it once. She needs no extension or account setup. |
+| Shared calendar | Google Calendar | The people you share it with subscribe once. They need no extension or account setup. |
 | Extension | Your Chrome | Only you, to change settings |
 
 Your existing shared calendar carries over. The cloud backend uses the same Firestore database, so you don't need to recreate anything.
 
-Run every command below in **Terminal on your Mac, from the repo root** (`google_calendar_grouper/`), all in **one Terminal window**. Later steps reuse variables set in earlier ones. If you close the window, re-run the 0c block first.
+Run every command below in a terminal (macOS or Linux), **from the repo root** (`google_calendar_grouper/`), all in **one terminal window**. Later steps reuse variables set in earlier ones. If you close the window, re-run the 0c block first.
 
 ---
 
@@ -158,7 +158,7 @@ Because the app isn't verified, sign-in shows a "Google hasn't verified this app
 
 This saves a fresh, non-expiring token in Firestore. Only `aryamanramchandran@gmail.com` is allowed to sign in (`ALLOWED_EMAILS`).
 
-Signing in doesn't tell the extension who you are: the sign-in page doesn't hand your user ID back to the extension yet. An extension you already set up (SETUP_GUIDE Phase 7) keeps working. A **fresh install** needs the Phase 7 step once, setting `userId` and `email` in the service worker console. Until then the popup shows the sign-in screen and loads no calendars.
+Signing in doesn't tell the extension who you are: the sign-in page doesn't hand your user ID back to the extension yet. An extension you already set up ([local setup](./setup.md), Phase 7) keeps working. A **fresh install** needs the Phase 7 step once, setting `userId` and `email` in the service worker console. Until then the popup shows the sign-in screen and loads no calendars.
 
 ---
 
@@ -213,7 +213,7 @@ You don't need to rebuild the extension: it reads the URL and key from this stor
 
 1. Close the laptop lid, or shut it down.
 2. On your phone, add an event to one of the calendars you share.
-3. Within about 2 minutes it appears on the shared calendar, both for you and for your girlfriend.
+3. Within about 2 minutes it appears on the shared calendar, both for you and for the people you shared it with.
 
 If she hasn't added the calendar yet: in the popup, enter her email under **Share with** → **Share**. She gets an email from Google Calendar and clicks **Add calendar**. That's everything she has to do.
 
