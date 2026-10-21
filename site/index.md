@@ -34,5 +34,5 @@ features:
     details: Syncing happens in the cloud, so the shared calendar stays current when your computer is off.
   - icon: 🛡️
     title: Your events stay in Google
-    details: Event details go straight from your calendars into the shared one. Calendar Grouper's database never stores them.
+    details: Event details go straight from your calendars into the shared one. Calendar Grouper's database never stores them. You run your own copy, in your own Google Cloud project.
 ---

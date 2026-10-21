@@ -27,7 +27,9 @@ Changes you make to your calendars appear on the shared calendar within about tw
 
 ## Status
 
-Calendar Grouper is in **early access**. Today it runs as a self-hosted setup: you deploy your own copy of the backend to Google Cloud, which fits in the free tier. A public Chrome Web Store version is planned.
+Calendar Grouper is **open source and self-hosted**. There's no public service to sign up for: you run your own copy of the backend in your own Google Cloud project, and you decide which Google accounts may use it. A partner or family member can use your copy too, with their calendars kept separate from yours.
+
+For a handful of people checked every two minutes, the backend stays within Google Cloud's free tier. See [What does it cost?](./faq#what-does-it-cost)
 
 - To see what the extension looks like day to day, read [Using Calendar Grouper](./using).
 - To set up your own copy, start with [Local setup](/self-hosting/setup).

@@ -1,9 +1,9 @@
 import { defineConfig } from "vitepress";
 
 // Set SITE_URL when building for the real domain, e.g.
-//   SITE_URL=https://calendargrouper.com npm run build
+//   SITE_URL=https://example.com npm run build
 // It's used for the sitemap and the link-preview image (LinkedIn, Slack...).
-const SITE_URL = (process.env.SITE_URL || "https://calendar-grouper-511703.web.app").replace(/\/+$/, "");
+const SITE_URL = (process.env.SITE_URL || "https://calendargrouper.com").replace(/\/+$/, "");
 const REPO = "https://github.com/aryamanram/google_calendar_grouper";
 const DESCRIPTION =
   "Share all your Google Calendars as one calendar someone can toggle on and off, without merging them.";

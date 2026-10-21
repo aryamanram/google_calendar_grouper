@@ -12,6 +12,7 @@ const { startWatchRenewalJob } = require("./services/watchManager");
 const { startAutoSync, pollOnce } = require("./services/autoSync");
 const { requireApiKey, requireTickSecret } = require("./middleware/auth");
 const { IS_CLOUD, RUN_MODE } = require("./runMode");
+const { allowedEmails, extensionIds } = require("./config");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -22,8 +23,10 @@ const PORT = process.env.PORT || 3000;
 app.use(helmet());
 app.use(
   cors({
+    // Every installed copy of the extension has its own ID, so EXTENSION_ID
+    // can list several (one per person using this backend).
     origin: [
-      `chrome-extension://${process.env.EXTENSION_ID}`,
+      ...extensionIds().map((id) => `chrome-extension://${id}`),
       "http://localhost:5173", // Vite dev server for popup
     ],
     credentials: true,
@@ -68,9 +71,10 @@ app.get("/health", (_req, res) => res.json({ status: "ok", mode: RUN_MODE }));
 async function start() {
   if (IS_CLOUD) {
     const missing = ["API_KEY", "TICK_SECRET", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET",
-      "GOOGLE_REDIRECT_URI", "EXTENSION_ID"].filter((k) => !process.env[k]?.trim());
+      "GOOGLE_REDIRECT_URI"].filter((k) => !process.env[k]?.trim());
+    if (extensionIds().length === 0) missing.push("EXTENSION_ID");
     // An empty allow-list would let any Google account sign in.
-    if (authRoutes.allowedEmails().length === 0) missing.push("ALLOWED_EMAILS");
+    if (allowedEmails().length === 0) missing.push("ALLOWED_EMAILS");
     if (missing.length) {
       throw new Error(`Cloud mode needs these environment variables: ${missing.join(", ")}`);
     }

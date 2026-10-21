@@ -9,7 +9,9 @@ lastUpdated: false
 
 *Effective October 21, 2026*
 
-Calendar Grouper is a personal project by Aryaman Ramchandran. It combines Google Calendars you choose into one shared calendar. This policy explains what it accesses, what it stores, and how to remove it.
+Calendar Grouper is open-source software by Aryaman Ramchandran. It combines Google Calendars you choose into one shared calendar. This policy explains what it accesses, what it stores, and how to remove it.
+
+There's no public Calendar Grouper service. Each copy runs on a backend in its operator's own Google Cloud project, and only the Google accounts that operator allows can sign in. The developer's own backend is private. "The operator" below means whoever runs the backend you use.
 
 ## What Calendar Grouper accesses
 
@@ -20,7 +22,7 @@ When you sign in with Google, you grant two permissions:
 
 ## What is stored
 
-Calendar Grouper keeps a small amount of data in a Google Cloud Firestore database run by the developer:
+Calendar Grouper keeps a small amount of data in a Google Cloud Firestore database run by the operator:
 
 | Data | Why |
 |---|---|
@@ -32,6 +34,8 @@ Calendar Grouper keeps a small amount of data in a Google Cloud Firestore databa
 
 **Event contents aren't stored by Calendar Grouper.** Titles, descriptions and locations are read from your selected calendars and written straight into the shared calendar, which lives in your own Google account. They never go into Calendar Grouper's database. For calendars set to "busy", only the times are copied.
 
+The extension also keeps a few settings in your browser (`chrome.storage.local`): the backend address, its API key, and the signed-in account's ID and email. **Sign out** removes the account ID and email; removing the extension deletes all of it.
+
 Server logs record calendar names, event counts and errors, and are kept under Google Cloud's default log retention. They don't contain event contents.
 
 ## This website
@@ -40,7 +44,7 @@ This website uses no cookies, analytics or tracking. It's served by Firebase Hos
 
 ## Sharing
 
-The shared calendar's events are visible to the people you choose to share it with, through Google Calendar's normal sharing. Calendar Grouper doesn't sell, rent or share your data with anyone. It shows no ads and includes no analytics or tracking. It runs on Google Cloud (Cloud Run, Firestore, Secret Manager, Firebase Hosting), which processes this data on the developer's behalf.
+The shared calendar's events are visible to the people you choose to share it with, through Google Calendar's normal sharing. Calendar Grouper doesn't sell, rent or share your data with anyone. It shows no ads and includes no analytics or tracking. It runs on Google Cloud (Cloud Run, Firestore, Secret Manager), which processes this data on the operator's behalf.
 
 ## Google API Services User Data Policy
 
@@ -50,11 +54,11 @@ Calendar Grouper's use and transfer of information received from Google APIs wil
 
 - **Delete the shared calendar** from the extension. This removes the calendar from Google and deletes its settings and event ID pairs from Calendar Grouper's database.
 - **Revoke access** at any time at [myaccount.google.com/connections](https://myaccount.google.com/connections). Calendar Grouper then can no longer reach your calendars.
-- **Remove everything**, including your stored sign-in tokens, by emailing the address below. It's deleted within 30 days.
+- **Remove everything**, including your stored sign-in tokens, by asking the operator. For the developer's own backend, email the address below; it's deleted within 30 days.
 
 ## Self-hosted copies
 
-Calendar Grouper's code is open source. If you run your own copy by following the [self-hosting guide](/self-hosting/setup), your data is stored in your own Google Cloud project, and this policy's developer has no access to it.
+If you run your own copy by following the [self-hosting guide](/self-hosting/setup), you're the operator: your data is stored in your own Google Cloud project, and the developer has no access to it.
 
 ## Children
 

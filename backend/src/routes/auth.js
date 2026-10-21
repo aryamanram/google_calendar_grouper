@@ -4,21 +4,25 @@ const { createOAuth2Client } = require("../services/googleApi");
 const { saveUserTokens } = require("../models/firestore");
 const { requireApiKey } = require("../middleware/auth");
 const { IS_CLOUD } = require("../runMode");
+const { allowedEmails, extensionIds, EXTENSION_ID_PATTERN } = require("../config");
 
-// Comma-separated allow-list, e.g. "you@gmail.com". When set, nobody else can
-// sign in and store their tokens in your database. Required in cloud mode
-// (index.js refuses to start without it); optional locally.
-function allowedEmails() {
-  return (process.env.ALLOWED_EMAILS || "")
-    .split(",")
-    .map((e) => e.trim().toLowerCase())
-    .filter(Boolean);
-}
-
+// ALLOWED_EMAILS lists the Google accounts that may sign in, e.g.
+// "you@gmail.com partner@gmail.com". Nobody else can store their tokens in
+// your database. Required in cloud mode (index.js refuses to start without
+// it); optional locally.
 function isAllowedEmail(email) {
   const list = allowedEmails();
   if (list.length === 0) return !IS_CLOUD; // never open sign-in to everyone in the cloud
   return list.includes(String(email || "").toLowerCase());
+}
+
+// The extension that started a sign-in, if it's one this backend accepts.
+// Locally, with no EXTENSION_ID set, any well-formed ID is accepted.
+function acceptedExtensionId(id) {
+  if (!EXTENSION_ID_PATTERN.test(String(id || ""))) return null;
+  const ids = extensionIds();
+  if (ids.length === 0) return IS_CLOUD ? null : id;
+  return ids.includes(id) ? id : null;
 }
 
 // The scopes we need:
@@ -31,22 +35,30 @@ const SCOPES = [
 ];
 
 // ---------------------------------------------------------------------------
-// GET /auth/login
+// GET /auth/login[?ext=<extension id>]
 //
-// The extension opens this URL in a new tab. Google's consent screen appears,
-// user approves, Google redirects to /auth/callback.
+// Sends the browser to Google's consent screen; Google then redirects to
+// /auth/callback.
+//
+// The extension opens this with chrome.identity.launchWebAuthFlow and its own
+// ID in `ext`. The ID rides through Google in the OAuth `state`, so the
+// callback can hand the signed-in account back to that extension. Opened
+// without `ext` (for example by hand while testing), sign-in still works and
+// ends on a plain success page.
 // ---------------------------------------------------------------------------
 router.get("/login", (req, res) => {
-  const client = createOAuth2Client();
+  if (req.query.ext && !acceptedExtensionId(req.query.ext)) {
+    return res
+      .status(403)
+      .send("This copy of the extension isn't allowed to use this backend. Add its ID to EXTENSION_ID.");
+  }
 
+  const client = createOAuth2Client();
   const url = client.generateAuthUrl({
-    access_type: "offline",    // gives us a refresh_token
-    prompt: "consent",         // force consent to always get refresh_token
+    access_type: "offline", // gives us a refresh_token
+    prompt: "consent",      // always ask, so Google always returns a refresh_token
     scope: SCOPES,
-    // Pass a state param so we can identify the user after redirect.
-    // For MVP, the extension sends its own generated user-id or we derive
-    // one from the Google profile after token exchange.
-    state: req.query.state || "",
+    state: req.query.ext ? `ext:${req.query.ext}` : "",
   });
 
   res.redirect(url);
@@ -56,11 +68,14 @@ router.get("/login", (req, res) => {
 // GET /auth/callback
 //
 // Google redirects here after consent. We exchange the code for tokens,
-// extract the user's Google ID, and store everything in Firestore.
+// look up the account, check it's allowed, and store the tokens.
 // ---------------------------------------------------------------------------
 router.get("/callback", async (req, res) => {
-  const { code } = req.query;
+  const { code, error } = req.query;
 
+  if (error) {
+    return res.status(400).send(page("Sign-in cancelled", "Google didn't grant access. Close this window and try again."));
+  }
   if (!code) {
     return res.status(400).json({ error: "Missing authorization code" });
   }
@@ -70,7 +85,7 @@ router.get("/callback", async (req, res) => {
     const { tokens } = await client.getToken(code);
     client.setCredentials(tokens);
 
-    // Get the user's Google profile to derive a stable user ID
+    // The Google profile gives a stable user ID and the email to check.
     const { google } = require("googleapis");
     const oauth2 = google.oauth2({ version: "v2", auth: client });
     const { data: profile } = await oauth2.userinfo.get();
@@ -79,45 +94,46 @@ router.get("/callback", async (req, res) => {
 
     if (!isAllowedEmail(profile.email)) {
       console.warn(`Sign-in refused for ${profile.email} (not in ALLOWED_EMAILS)`);
-      return res.status(403).send("This account isn't allowed to use this Calendar Grouper backend.");
+      return res
+        .status(403)
+        .send(page("Account not allowed", "This Google account isn't allowed to use this Calendar Grouper backend."));
     }
 
     await saveUserTokens(userId, tokens);
     require("../services/googleApi").forgetAuthClient(userId); // use the new tokens
+    console.log(`Signed in: ${profile.email}`);
 
-    // Send a simple HTML page that posts a message back to the extension
-    // so the popup knows auth succeeded.
-    res.send(`
-      <!DOCTYPE html>
-      <html>
-      <head><title>Calendar Grouper — Authorized</title></head>
-      <body>
-        <h2>Authorization successful!</h2>
-        <p>You can close this tab and return to the extension.</p>
-        <script>
-          // Post the userId back to the extension via BroadcastChannel
-          // The extension's background worker listens for this.
-          try {
-            const bc = new BroadcastChannel("calendar-grouper-auth");
-            bc.postMessage({
-              type: "AUTH_SUCCESS",
-              userId: ${JSON.stringify(userId)},
-              email: ${JSON.stringify(profile.email)},
-            });
-            bc.close();
-          } catch (e) {
-            // Fallback: the extension can poll /auth/status
-          }
-          setTimeout(() => window.close(), 2000);
-        </script>
-      </body>
-      </html>
-    `);
+    // Started from the extension: send the account back to it. Chrome catches
+    // this chromiumapp.org address and returns it to launchWebAuthFlow; the
+    // page itself never loads.
+    const state = String(req.query.state || "");
+    const ext = state.startsWith("ext:") ? acceptedExtensionId(state.slice(4)) : null;
+    if (ext) {
+      const fragment = new URLSearchParams({ userId, email: profile.email || "" });
+      return res.redirect(`https://${ext}.chromiumapp.org/signed-in#${fragment}`);
+    }
+
+    res.send(page("Authorization successful!", "You can close this tab."));
   } catch (err) {
     console.error("Auth callback error:", err);
     res.status(500).json({ error: "Token exchange failed" });
   }
 });
+
+// ---------------------------------------------------------------------------
+// GET /auth/check
+//
+// Lets the extension's setup screen confirm the backend URL and API key work.
+// ---------------------------------------------------------------------------
+router.get("/check", requireApiKey, (_req, res) => {
+  res.json({ ok: true });
+});
+
+function page(title, message) {
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Calendar Grouper</title></head>
+<body style="font-family: Roboto, Arial, sans-serif; padding: 48px; color: #202124">
+<h2 style="font-weight: 400">${title}</h2><p style="color: #5f6368">${message}</p></body></html>`;
+}
 
 // ---------------------------------------------------------------------------
 // GET /auth/calendars?userId=...
@@ -154,4 +170,3 @@ router.get("/calendars", requireApiKey, async (req, res) => {
 });
 
 module.exports = router;
-module.exports.allowedEmails = allowedEmails;
