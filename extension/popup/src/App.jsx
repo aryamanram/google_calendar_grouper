@@ -3,9 +3,9 @@ import React, { useState, useEffect, useCallback } from "react";
 // ---------------------------------------------------------------------------
 // Config
 //
-// The backend URL and API key live in chrome.storage.local (set once from the
-// service worker console, see site/self-hosting/deploy.md), so switching between the
-// local and cloud backend needs no rebuild. Defaults to the local backend.
+// The backend URL and API key are entered on the popup's setup screen and kept
+// in chrome.storage.local, so switching between the local and cloud backend
+// needs no rebuild.
 // ---------------------------------------------------------------------------
 const DEFAULT_BACKEND_URL = "http://localhost:3000";
 let backendUrl = DEFAULT_BACKEND_URL;
@@ -33,7 +33,7 @@ async function api(path, options = {}) {
   if (!res.ok) {
     const message =
       res.status === 401
-        ? "The backend rejected the API key. Check apiKey in the extension's storage."
+        ? "The backend rejected the API key. Open Settings at the bottom to check it."
         : body.error || `API error ${res.status}`;
     const err = new Error(message);
     err.status = res.status;
@@ -41,6 +41,12 @@ async function api(path, options = {}) {
     throw err;
   }
   return body;
+}
+
+const inExtension = typeof chrome !== "undefined" && !!chrome.runtime?.sendMessage;
+
+function send(message) {
+  return new Promise((resolve) => chrome.runtime.sendMessage(message, resolve));
 }
 
 const COOLDOWN_MS = 3000; // buttons stay disabled briefly after each action
@@ -66,13 +72,7 @@ const styles = {
     width: 20,
     height: 20,
     borderRadius: 4,
-    background: "#4285f4",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    color: "#fff",
-    fontSize: 12,
-    fontWeight: 600,
+    flexShrink: 0,
   },
   headerTitle: {
     fontSize: 14,
@@ -213,6 +213,35 @@ const styles = {
     padding: "40px 20px",
     gap: 16,
   },
+  fieldLabel: {
+    display: "block",
+    fontSize: 12,
+    color: "#5f6368",
+    margin: "10px 0 4px",
+  },
+  hint: {
+    fontSize: 11,
+    color: "#9aa0a6",
+    marginTop: 4,
+    lineHeight: 1.4,
+  },
+  code: {
+    fontFamily: "ui-monospace, Menlo, Consolas, monospace",
+    fontSize: 11,
+    background: "#f1f3f4",
+    padding: "1px 4px",
+    borderRadius: 3,
+    userSelect: "all",
+  },
+  accountBar: {
+    display: "flex",
+    alignItems: "center",
+    gap: 4,
+    padding: "8px 16px 12px",
+    borderTop: "1px solid #e0e0e0",
+    fontSize: 11,
+    color: "#9aa0a6",
+  },
   loginText: {
     fontSize: 13,
     color: "#5f6368",
@@ -297,6 +326,15 @@ export default function App() {
   const [email, setEmail] = useState(null);
   const [loading, setLoading] = useState(true);
 
+  // Setup screen: where the backend is, and its API key
+  const [showSetup, setShowSetup] = useState(false);
+  const [setupUrl, setSetupUrl] = useState(DEFAULT_BACKEND_URL);
+  const [setupKey, setSetupKey] = useState("");
+  const [checking, setChecking] = useState(false);
+  const [configuredUrl, setConfiguredUrl] = useState(null); // saved backend, if any
+
+  const [signingIn, setSigningIn] = useState(false);
+
   // { kind: "info" | "success" | "error", text }
   const [notice, setNotice] = useState(null);
 
@@ -339,18 +377,9 @@ export default function App() {
     return sel;
   }
 
-  // ------ Auth ------
+  // ------ Settings and sign-in state ------
   useEffect(() => {
-    if (typeof chrome !== "undefined" && chrome.runtime?.sendMessage) {
-      chrome.runtime.sendMessage({ type: "GET_AUTH_STATE" }, (response) => {
-        configure(response); // before setUserId, which triggers the first API call
-        if (response?.userId) {
-          setUserId(response.userId);
-          setEmail(response.email);
-        }
-        setLoading(false);
-      });
-    } else {
+    if (!inExtension) {
       // Running outside the extension (vite dev server)
       const stored = localStorage.getItem("calGrouper_userId");
       if (stored) {
@@ -358,7 +387,42 @@ export default function App() {
         setEmail(localStorage.getItem("calGrouper_email"));
       }
       setLoading(false);
+      return;
     }
+
+    send({ type: "GET_AUTH_STATE" }).then((response) => {
+      configure(response); // before setUserId, which triggers the first API call
+      setSetupUrl(response?.backendUrl || DEFAULT_BACKEND_URL);
+      setSetupKey(response?.apiKey || "");
+      setConfiguredUrl(response?.backendUrl || null);
+      if (!response?.backendUrl) {
+        setShowSetup(true); // first run
+      } else if (response.userId) {
+        setUserId(response.userId);
+        setEmail(response.email);
+      } else if (response.authError) {
+        setNotice({ kind: "error", text: response.authError });
+      }
+      setLoading(false);
+    });
+
+    // Sign-in finishes in the background worker. If the popup is still open
+    // when it does, pick up the result.
+    function onChanged(changes, area) {
+      if (area !== "local") return;
+      if (changes.userId?.newValue) {
+        setUserId(changes.userId.newValue);
+        setEmail(changes.email?.newValue || null);
+        setSigningIn(false);
+        setNotice(null);
+      }
+      if (changes.authError?.newValue) {
+        setSigningIn(false);
+        setNotice({ kind: "error", text: changes.authError.newValue });
+      }
+    }
+    chrome.storage.onChanged.addListener(onChanged);
+    return () => chrome.storage.onChanged.removeListener(onChanged);
   }, []);
 
   // ------ Load calendars + existing group ------
@@ -414,10 +478,58 @@ export default function App() {
 
   // ------ Handlers ------
   function handleLogin() {
-    if (typeof chrome !== "undefined" && chrome.runtime?.sendMessage) {
-      chrome.runtime.sendMessage({ type: "START_AUTH" });
+    setNotice(null);
+    if (inExtension) {
+      setSigningIn(true);
+      send({ type: "START_AUTH" }); // the result arrives through storage
     } else {
       window.open(`${backendUrl}/auth/login`, "_blank");
+    }
+  }
+
+  function handleLogout() {
+    send({ type: "LOGOUT" }).then(() => {
+      setUserId(null);
+      setEmail(null);
+      setGroup(null);
+      setCalendars([]);
+      setNotice(null);
+    });
+  }
+
+  // Save the backend URL and API key, after checking they work.
+  async function handleSaveSetup(e) {
+    e?.preventDefault();
+    const url = setupUrl.trim().replace(/\/+$/, "");
+    if (!/^https?:\/\/.+/.test(url)) {
+      setNotice({ kind: "error", text: "Enter the backend's full address, starting with https://" });
+      return;
+    }
+    setChecking(true);
+    setNotice(null);
+    try {
+      const headers = setupKey.trim() ? { "x-api-key": setupKey.trim() } : {};
+      let res;
+      try {
+        res = await fetch(`${url}/auth/check`, { headers });
+      } catch {
+        throw new Error(
+          `Can't reach ${url}. Check the address, and that this extension's ID is in the backend's EXTENSION_ID.`
+        );
+      }
+      if (res.status === 401) throw new Error("The backend rejected that API key.");
+      if (!res.ok) throw new Error(`The backend answered with an error (${res.status}). Is the address right?`);
+
+      await send({ type: "SAVE_SETTINGS", backendUrl: url, apiKey: setupKey });
+      configure({ backendUrl: url, apiKey: setupKey.trim() });
+      setConfiguredUrl(url);
+      setShowSetup(false);
+      setNotice({ kind: "success", text: "Connected to the backend." });
+      if (userId) load();
+    } catch (err) {
+      setNotice({ kind: "error", text: err.message });
+    } finally {
+      setChecking(false);
     }
   }
 
@@ -580,22 +692,100 @@ export default function App() {
     }
   }
 
-  // ------ Render: login screen ------
+  // ------ Render: setup and login screens ------
   if (loading) return null;
+
+  const header = (
+    <div style={styles.header}>
+      <img src="../../assets/icon128.png" alt="" style={styles.headerIcon} />
+      <span style={styles.headerTitle}>Calendar Grouper</span>
+    </div>
+  );
+
+  if (showSetup) {
+    return (
+      <div style={styles.container}>
+        {header}
+        {notice && <div style={styles.notice(notice.kind)}>{notice.text}</div>}
+        <form style={styles.section} onSubmit={handleSaveSetup}>
+          <div style={{ ...styles.sectionLabel, marginTop: 4 }}>Connect to your backend</div>
+          <p style={{ ...styles.loginText, textAlign: "left" }}>
+            Get these from whoever runs your Calendar Grouper backend.
+          </p>
+
+          <label style={styles.fieldLabel} htmlFor="backend-url">Backend address</label>
+          <input
+            id="backend-url"
+            style={{ ...styles.nameInput, marginBottom: 0 }}
+            value={setupUrl}
+            onChange={(e) => setSetupUrl(e.target.value)}
+            placeholder="https://calendar-grouper-….run.app"
+            autoFocus
+          />
+
+          <label style={styles.fieldLabel} htmlFor="api-key">API key</label>
+          <input
+            id="api-key"
+            type="password"
+            style={{ ...styles.nameInput, marginBottom: 0 }}
+            value={setupKey}
+            onChange={(e) => setSetupKey(e.target.value)}
+            placeholder="Not needed for a local backend"
+            autoComplete="off"
+          />
+
+          {inExtension && (
+            <div style={{ ...styles.hint, marginTop: 12 }}>
+              This extension's ID is <span style={styles.code}>{chrome.runtime.id}</span>. The backend's{" "}
+              <span style={styles.code}>EXTENSION_ID</span> setting must include it.
+            </div>
+          )}
+
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 14 }}>
+            {configuredUrl && (
+              <button
+                type="button"
+                style={styles.btnText}
+                onClick={() => {
+                  setShowSetup(false);
+                  setNotice(null);
+                }}
+              >
+                Cancel
+              </button>
+            )}
+            <button type="submit" style={{ ...styles.btnPrimary, opacity: checking ? 0.6 : 1 }} disabled={checking}>
+              {checking ? "Checking…" : "Save"}
+            </button>
+          </div>
+        </form>
+      </div>
+    );
+  }
 
   if (!userId) {
     return (
       <div style={styles.container}>
-        <div style={styles.header}>
-          <div style={styles.headerIcon}>G</div>
-          <span style={styles.headerTitle}>Calendar Grouper</span>
-        </div>
+        {header}
+        {notice && <div style={styles.notice(notice.kind)}>{notice.text}</div>}
         <div style={styles.loginContainer}>
           <p style={styles.loginText}>Sign in with Google to group and share your calendars.</p>
-          <button style={styles.btnPrimary} onClick={handleLogin}>
-            Sign in with Google
+          <button
+            style={{ ...styles.btnPrimary, opacity: signingIn ? 0.6 : 1 }}
+            onClick={handleLogin}
+            disabled={signingIn}
+          >
+            {signingIn ? "Waiting for Google…" : "Sign in with Google"}
           </button>
         </div>
+        {inExtension && (
+          <div style={styles.accountBar}>
+            <span style={{ flex: 1 }}>Backend: {backendUrl.replace(/^https?:\/\//, "")}</span>
+            <button style={{ ...styles.btnText, padding: 0, fontSize: 11 }} onClick={() => setShowSetup(true)}>
+              Change
+            </button>
+          </div>
+        )}
       </div>
     );
   }
@@ -613,7 +803,7 @@ export default function App() {
     <div style={styles.container}>
       {/* Header */}
       <div style={styles.header}>
-        <div style={styles.headerIcon}>G</div>
+        <img src="../../assets/icon128.png" alt="" style={styles.headerIcon} />
         <span style={styles.headerTitle}>Calendar Grouper</span>
         <button
           style={{ ...styles.btnText, opacity: locked ? 0.45 : 1, cursor: locked ? "default" : "pointer" }}
@@ -783,6 +973,19 @@ export default function App() {
           </button>
         </div>
       )}
+
+      {/* Account */}
+      <div style={styles.accountBar}>
+        <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{email}</span>
+        {inExtension && (
+          <button style={{ ...styles.btnText, padding: "0 4px", fontSize: 11 }} onClick={() => setShowSetup(true)}>
+            Settings
+          </button>
+        )}
+        <button style={{ ...styles.btnText, padding: "0 4px", fontSize: 11 }} onClick={handleLogout} disabled={!!busy}>
+          Sign out
+        </button>
+      </div>
     </div>
   );
 }

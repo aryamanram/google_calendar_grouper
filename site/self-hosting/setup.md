@@ -165,10 +165,9 @@ The expected response is `{"status":"ok"}`.
 3. At **"Google hasn't verified this app,"** click **Continue**. (On some versions of the screen it's **Advanced** → **Go to Calendar Grouper**.)
 4. On the permissions screen, **make sure the Calendar permission checkbox is checked.** Google lets you untick individual scopes, and if Calendar is unticked, everything after this step fails. Then click **Continue**.
 5. You should see **"Authorization successful!"**
-6. Go to the Cloud console → **Firestore** → **Firestore Studio** (or **Data**). You should see a `users` collection containing one document.
-7. **Copy that document's ID.** It's your Google user ID, a long number. You'll need it in Phase 7.
+6. Go to the Cloud console → **Firestore** → **Firestore Studio** (or **Data**). You should see a `users` collection containing one document, named with your Google user ID.
 
-**✅ Checkpoint:** A `users/<yourUserId>` document exists, and you've copied the ID.
+**✅ Checkpoint:** A `users/<yourUserId>` document exists.
 
 ---
 
@@ -196,22 +195,14 @@ If the popup opens blank, right-click inside it → **Inspect** → **Console** 
 
 ---
 
-## Phase 7 — Link the extension to your account (manual for now)
+## Phase 7 — Connect the extension and sign in
 
-The automatic handoff from sign-in to the extension isn't built yet, so you'll set it by hand this once.
+1. Click the extension icon in the toolbar. The popup shows **Connect to your backend**.
+2. Leave **Backend address** as `http://localhost:3000` and **API key** empty, then click **Save**.
+3. Click **Sign in with Google**. Google's consent screen opens in its own window; approve it as in Phase 5. The window closes on its own.
+4. Open the popup again. Your real calendars should load, each with a checkbox and a detail dot.
 
-1. Go to `chrome://extensions` → on the Calendar Grouper card, click **service worker** (next to "Inspect views").
-2. In the **Console** that opens, paste the following, using your own values:
-   ```javascript
-   chrome.storage.local.set(
-     { userId: "PASTE_USER_ID_FROM_PHASE_5", email: "you@gmail.com" },
-     () => console.log("Auth state set")
-   );
-   ```
-   Press Enter. You should see `Auth state set`.
-3. Click the extension icon in the toolbar. Your real calendars should load, each with a checkbox and a detail dot.
-
-**✅ Checkpoint:** The popup lists your actual calendars.
+**✅ Checkpoint:** The popup lists your actual calendars, and your email is shown at the bottom.
 
 ---
 
@@ -226,7 +217,7 @@ The automatic handoff from sign-in to the extension isn't built yet, so you'll s
    - `Synced "Work": +N added ...` means it worked.
    - `Watch not registered for ...` is **expected on localhost** and is not a bug. Live webhooks need a public, verified HTTPS domain, which is a later milestone.
 3. Open Google Calendar. The merged calendar should appear, containing your events.
-4. New, edited and deleted events sync on their own. The backend checks every 2 minutes (`SYNC_POLL_SECONDS` in `.env`), so a change shows up on the shared calendar within a couple of minutes. To sync immediately, click **Sync now** in the popup, or:
+4. New, edited and deleted events sync on their own. The backend checks every 2 minutes (`SYNC_POLL_SECONDS` in `.env`), so a change shows up on the shared calendar within a couple of minutes. To sync immediately, click **Sync now** in the popup, or use `curl` (your user ID is the name of your Firestore `users` document from Phase 5):
    ```bash
    curl "http://localhost:3000/groups?userId=YOUR_USER_ID"
    # copy the group's "id" from the output, then:

@@ -9,7 +9,7 @@ lastUpdated: false
 
 *Effective October 21, 2026*
 
-These terms cover your use of Calendar Grouper, a Chrome extension and cloud service by Aryaman Ramchandran that combines Google Calendars you choose into one shared calendar.
+These terms cover your use of Calendar Grouper, open-source software by Aryaman Ramchandran that combines Google Calendars you choose into one shared calendar, and of this website.
 
 ## Using Calendar Grouper
 
@@ -23,7 +23,7 @@ You keep ownership of your calendars and events. Calendar Grouper uses them only
 
 ## Availability
 
-Calendar Grouper is an early-access personal project, offered free of charge. It may change, pause or stop at any time. Access can be limited or removed, for example if these terms are broken.
+Calendar Grouper is a personal project. There's no public service: each copy runs on its operator's own backend, and the developer's backend is available only to people he invites. Any backend may change, pause or stop at any time, and its operator can remove access.
 
 ## No warranty
 

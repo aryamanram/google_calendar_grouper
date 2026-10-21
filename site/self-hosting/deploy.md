@@ -108,9 +108,10 @@ CLIENT_ID=$(grep '^GOOGLE_CLIENT_ID=' backend/.env | cut -d= -f2-)
 gcloud run deploy $SERVICE --source backend --region $REGION \
   --service-account $SA --allow-unauthenticated \
   --min-instances 0 --max-instances 1 --cpu 1 --memory 512Mi --timeout 900 \
-  --set-env-vars "RUN_MODE=cloud,FIRESTORE_PROJECT_ID=$PROJECT_ID,GOOGLE_CLIENT_ID=$CLIENT_ID,GOOGLE_REDIRECT_URI=$URL/auth/callback,BACKEND_URL=$URL,EXTENSION_ID=$EXT_ID,ALLOWED_EMAILS=aryamanramchandran@gmail.com" \
+  --set-env-vars "RUN_MODE=cloud,FIRESTORE_PROJECT_ID=$PROJECT_ID,GOOGLE_CLIENT_ID=$CLIENT_ID,GOOGLE_REDIRECT_URI=$URL/auth/callback,BACKEND_URL=$URL,EXTENSION_ID=$EXT_ID,ALLOWED_EMAILS=you@gmail.com" \
   --set-secrets "GOOGLE_CLIENT_SECRET=GOOGLE_CLIENT_SECRET:latest,API_KEY=API_KEY:latest,TICK_SECRET=TICK_SECRET:latest"
 ```
+- Replace `you@gmail.com` with your Google account. It's the only account allowed to sign in. To let someone else use your backend later, see [Adding another person](#adding-another-person).
 - If it asks to create an Artifact Registry repository, answer **Y**.
 - The first build takes 2–4 minutes.
 
@@ -133,16 +134,16 @@ Expect `{"status":"ok","mode":"cloud"}`. If it can't connect, confirm the URL Cl
 In the Cloud console, open **Google Auth Platform**:
 
 1. **Clients** → `Calendar Grouper Backend` → scroll to **Authorized redirect URIs** (*not* "Authorized JavaScript origins" above it, which rejects paths with "URIs must not contain a path") → **Add URI** → paste the output of `echo $URL/auth/callback` → **Save**. Keep the localhost URI too.
-2. **Branding**: publishing needs a homepage and privacy policy on an authorized domain. This repo serves both from `docs/` with GitHub Pages: repo **Settings → Pages →** *Deploy from a branch*, `main`, `/docs`. Then fill in:
-   - **Application home page:** `https://aryamanram.github.io/google_calendar_grouper/`
-   - **Application privacy policy link:** `https://aryamanram.github.io/google_calendar_grouper/privacy.html`
-   - **Authorized domains:** `aryamanram.github.io`
+2. **Branding**: publishing needs a homepage and a privacy policy link. If you don't have your own, use the project's:
+   - **Application home page:** `https://calendargrouper.com`
+   - **Application privacy policy link:** `https://calendargrouper.com/privacy`
+   - **Authorized domains:** `calendargrouper.com`
    - Skip the logo. Uploading one forces a verification review.
 3. **Audience** → **Publish app** → **Confirm**. Status changes to **In production**. A "needs verification" notice appears; leave it, since it's not required at this size.
 
 Why publish: while the app is in *Testing*, Google expires the backend's access after 7 days, and syncing would silently stop every week. Once published, the access lasts until you revoke it.
 
-Because the app isn't verified, sign-in shows a "Google hasn't verified this app" warning, and at most 100 people could ever use it. Neither matters here: you're the only one who signs in.
+Because the app isn't verified, sign-in shows a "Google hasn't verified this app" warning, and at most 100 people could ever use it. Neither matters for a personal backend: only the accounts in `ALLOWED_EMAILS` can sign in, and you don't need to submit it for verification.
 
 ---
 
@@ -156,9 +157,7 @@ Because the app isn't verified, sign-in shows a "Google hasn't verified this app
 3. On the warning screen, click **Advanced → Go to Calendar Grouper**. Leave the **Calendar** box checked, then click **Continue**. You should see "Authorization successful!"
    If you already granted access while running locally, there are no checkboxes. The screen says the app "already has some access". That's fine; click **Continue**.
 
-This saves a fresh, non-expiring token in Firestore. Only `aryamanramchandran@gmail.com` is allowed to sign in (`ALLOWED_EMAILS`).
-
-Signing in doesn't tell the extension who you are: the sign-in page doesn't hand your user ID back to the extension yet. An extension you already set up ([local setup](./setup.md), Phase 7) keeps working. A **fresh install** needs the Phase 7 step once, setting `userId` and `email` in the service worker console. Until then the popup shows the sign-in screen and loads no calendars.
+This saves a fresh, non-expiring token in Firestore. Only the accounts in `ALLOWED_EMAILS` are allowed to sign in. (You'll also sign in from the extension in step 6; this step just confirms sign-in works on the cloud backend.)
 
 ---
 
@@ -190,22 +189,17 @@ You want a **200** every 2 minutes. A **401** means the tick secret doesn't matc
 
 ## 6 — Point the extension at the cloud
 
-0. Rebuild the popup so it has the code that reads the URL and key from storage. An old build only knows `localhost` and shows "Failed to fetch":
+1. Rebuild the popup and reload the extension, so it has the latest code:
    ```bash
    (cd extension/popup && npm run build)
    ```
-1. `chrome://extensions` → Calendar Grouper → **service worker** → **Console**.
-2. Paste this, with your URL and the API key from step 1:
-   ```javascript
-   chrome.storage.local.set(
-     { backendUrl: "PASTE_URL_HERE", apiKey: "PASTE_API_KEY_HERE" },
-     () => console.log("saved")
-   );
-   ```
-   Print the URL with `echo $URL`. Use no trailing slash.
-3. Click **↻** on the extension card, then open the popup. Your shared calendar and its settings should appear.
+   Then click **↻** on the extension's card in `chrome://extensions`.
+2. Open the popup. If it shows **Connect to your backend**, fill it in. Otherwise click **Settings** at the bottom.
+   - **Backend address:** the output of `echo $URL`
+   - **API key:** the output of `gcloud secrets versions access latest --secret=API_KEY`
 
-You don't need to rebuild the extension: it reads the URL and key from this storage.
+   Click **Save**. The popup checks both before saving.
+3. If it asks you to sign in, click **Sign in with Google**. Your shared calendar and its settings appear.
 
 ---
 
@@ -215,7 +209,7 @@ You don't need to rebuild the extension: it reads the URL and key from this stor
 2. On your phone, add an event to one of the calendars you share.
 3. Within about 2 minutes it appears on the shared calendar, both for you and for the people you shared it with.
 
-If she hasn't added the calendar yet: in the popup, enter her email under **Share with** → **Share**. She gets an email from Google Calendar and clicks **Add calendar**. That's everything she has to do.
+If someone hasn't added your shared calendar yet: in the popup, enter their email under **Share with** → **Share**. They get an email from Google Calendar and click **Add calendar**. That's everything they have to do.
 
 ---
 
@@ -235,10 +229,10 @@ Or Cloud console → Cloud Run → `calendar-grouper` → **Logs**.
 
 **Working on the code locally again:**
 1. Pause the cloud sync: `gcloud scheduler jobs pause $SERVICE-tick --location $REGION`
-2. Point the extension back at your laptop: `chrome.storage.local.remove(["backendUrl", "apiKey"])` in the service worker console.
+2. Point the extension back at your laptop: popup → **Settings** → address `http://localhost:3000`, API key empty.
 3. Start `npm run dev`.
 
-When you're done, stop the local server, set `backendUrl`/`apiKey` again, and run `gcloud scheduler jobs resume $SERVICE-tick --location $REGION`.
+When you're done, stop the local server, put the cloud address and API key back in **Settings**, and run `gcloud scheduler jobs resume $SERVICE-tick --location $REGION`.
 
 **Changing how often it checks:** edit the schedule, for example every 5 minutes:
 ```bash
@@ -250,7 +244,23 @@ gcloud scheduler jobs update http $SERVICE-tick --location $REGION --schedule "*
 printf %s "$(openssl rand -hex 32)" | gcloud secrets versions add API_KEY --data-file=-
 gcloud run services update $SERVICE --region $REGION --update-labels key-rotated=$(date +%s)  # new revision reads the new key
 ```
-Then update `apiKey` in the extension.
+Then enter the new key in the popup's **Settings**, on every copy of the extension that uses this backend.
+
+### Adding another person
+
+Someone else can use your backend for their own calendars, for example a partner who wants to share their schedule with you too. Their calendars and shared calendar stay separate from yours. You pay for the backend; the extra cost is negligible.
+
+1. **Give them the extension.** Either they clone this repo and build it (Phase 6 of [local setup](./setup.md)), or you zip your `extension/` folder, without `popup/node_modules`, and send it. They load it from `chrome://extensions` → **Developer mode** → **Load unpacked**.
+2. **They open the popup.** It shows **Connect to your backend** and **this extension's ID**. They send you that ID.
+3. **Allow their account and their extension.** Use spaces between values: commas would split the setting in two.
+   ```bash
+   gcloud run services update $SERVICE --region $REGION \
+     --update-env-vars "^|^ALLOWED_EMAILS=you@gmail.com them@gmail.com|EXTENSION_ID=YOUR_EXTENSION_ID THEIR_EXTENSION_ID"
+   ```
+   (`^|^` tells gcloud to separate variables with `|` instead of commas.) Check the result with `gcloud run services describe $SERVICE --region $REGION --format=yaml | grep -A1 -E 'ALLOWED_EMAILS|EXTENSION_ID'`.
+4. **Give them the backend address and API key,** in person or through a password manager, not by plain email or chat. They enter both, click **Save**, then **Sign in with Google**. They'll see the "Google hasn't verified this app" warning: **Advanced → Go to Calendar Grouper**.
+
+Anyone with the API key and an allowed account can use the backend, so only add people you trust. To remove someone, update both settings without them and [rotate the API key](#everyday-operations).
 
 **Shutting it all down:**
 ```bash
@@ -268,13 +278,14 @@ Delete the shared calendar from the popup first if you no longer want it.
 | Deploy fails with a permissions error during the build | Step 0e |
 | Deploy succeeds but `/health` fails, and logs say `Cloud mode needs these environment variables` | A variable from step 2 was empty. `echo $CLIENT_ID $EXT_ID $URL` and redeploy |
 | `redirect_uri_mismatch` at sign-in | Step 3.1: the URI must exactly match `$URL/auth/callback` |
-| Popup: "The backend rejected the API key" | `apiKey` in step 6 doesn't match: `gcloud secrets versions access latest --secret=API_KEY` |
-| Popup: "Can't reach the backend" | `backendUrl` typo (a trailing slash is fine; the popup strips it) |
-| Popup: "Failed to fetch" | The popup is an old build that only knows `localhost`. Run `npm run build` in `extension/popup` and reload the extension (step 6.0) |
+| Popup: "The backend rejected the API key" | The key in **Settings** doesn't match: `gcloud secrets versions access latest --secret=API_KEY` |
+| Popup: "Can't reach …" when saving settings | The address is wrong, or this extension's ID (shown on the setup screen) isn't in `EXTENSION_ID` |
+| Popup: "Sign-in didn't finish" | The Google account isn't in `ALLOWED_EMAILS`, or this extension's ID isn't in `EXTENSION_ID` |
+| Popup has no **Settings** link, or shows a blue "G" icon | It's an old build. Run `npm run build` in `extension/popup` and reload the extension (step 6.1) |
 | `--region: expected one argument` / `No host part in the URL` | The step 0c variables aren't set in this Terminal window. Re-run the 0c block |
 | "Invalid Origin: URIs must not contain a path" | The redirect URI is in *Authorized JavaScript origins*. Move it to *Authorized redirect URIs* (step 3.1) |
-| Publish says homepage / privacy policy URL required | Step 3.2 (Branding + GitHub Pages) |
-| Popup shows a CORS error in its console | `EXTENSION_ID` in step 2 doesn't match the ID on the extension card |
+| Publish says homepage / privacy policy URL required | Step 3.2 (Branding) |
+| Popup shows a CORS error in its console | `EXTENSION_ID` doesn't include the ID on the extension card |
 | Logs: `invalid_grant` | The sign-in token is gone or expired. Make sure the app is **In production** (step 3.2), then repeat step 4 |
 | Events stop appearing | Logs for `Auto-sync failed`; Cloud Scheduler → `calendar-grouper-tick` → last run status |
 | Duplicate events | The local and cloud backends both ran. Stop the local one; the Delete button plus Create rebuilds a clean copy |

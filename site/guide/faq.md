@@ -2,7 +2,7 @@
 
 ## Does the other person need the extension?
 
-No. They add the shared calendar like any other Google Calendar, from the email Google sends when you share it. Only the person creating the shared calendar uses the extension.
+No. They add the shared calendar like any other Google Calendar, from the email Google sends when you share it. Only someone who wants to share their own calendars needs the extension.
 
 ## How quickly do changes show up?
 
@@ -42,4 +42,12 @@ To also delete your stored sign-in tokens, see the [privacy policy](/privacy#kee
 
 ## Why does Google say the app isn't verified?
 
-Google verifies apps that ask for calendar access before it removes that warning. Verification is in progress. Until then, sign-in shows "Google hasn't verified this app". Click **Advanced**, then **Go to Calendar Grouper**.
+Each copy of Calendar Grouper signs in through its owner's own Google Cloud project, and Google only removes the warning after reviewing an app for public use. A personal copy doesn't need that review, so sign-in shows "Google hasn't verified this app". Click **Advanced**, then **Go to Calendar Grouper**.
+
+## Can I sign up without setting anything up?
+
+No. There's no public Calendar Grouper service. To use it, you [run your own copy](/self-hosting/setup), or use the copy of someone who has added you.
+
+## Can two people share their schedules with each other?
+
+Yes. Each person creates their own shared calendar and shares it with the other. Both can use the same backend: the person who runs it adds the second person's account and extension (see [Adding another person](/self-hosting/deploy#adding-another-person)). Each person only ever sees and controls their own calendars.

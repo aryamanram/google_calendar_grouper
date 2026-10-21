@@ -2,6 +2,13 @@
 
 Everything happens in the extension's popup. Click the Calendar Grouper icon in Chrome's toolbar to open it.
 
+## First run
+
+1. The popup asks you to **Connect to your backend**. Enter the backend address and API key you got from whoever runs your backend (or set up yourself), then click **Save**.
+2. Click **Sign in with Google** and approve access in the window that opens. If Google warns that the app isn't verified, click **Advanced**, then **Go to Calendar Grouper**.
+
+Your email appears at the bottom of the popup, with **Settings** to change the backend and **Sign out**.
+
 ## Create your shared calendar
 
 1. **Name it.** Under *Shared calendar name*, type what the other person will see, for example *Alex's schedule*. The default is *My full schedule*.

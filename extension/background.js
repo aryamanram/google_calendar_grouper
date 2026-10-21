@@ -1,70 +1,83 @@
 // ---------------------------------------------------------------------------
 // Background service worker for Calendar Grouper
 //
-// Responsibilities:
-// 1. Listen for auth completion from the callback page
-// 2. Store userId/email in chrome.storage for the popup to read
-// 3. Relay messages between popup and backend when needed
+// Keeps the extension's settings in chrome.storage.local and runs Google
+// sign-in. Stored keys:
+//   backendUrl  the Calendar Grouper backend, e.g. https://…run.app
+//   apiKey      the backend's API_KEY (not needed for a local backend)
+//   userId      the signed-in Google account's ID
+//   email       the signed-in Google account's email
+//   authError   why the last sign-in failed, shown by the popup
 // ---------------------------------------------------------------------------
 
-// The backend URL and API key are stored in chrome.storage.local:
-//   chrome.storage.local.set({ backendUrl: "https://…run.app", apiKey: "…" })
-// Without them the extension talks to the local backend.
 const DEFAULT_BACKEND_URL = "http://localhost:3000";
-const SETTINGS_KEYS = ["userId", "email", "backendUrl", "apiKey"];
+const SETTINGS_KEYS = ["userId", "email", "backendUrl", "apiKey", "authError"];
 
-// Listen for messages from the popup
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+function trimUrl(url) {
+  return String(url || "").trim().replace(/\/+$/, "");
+}
+
+// Sign in through the backend's Google consent flow. Chrome shows it in its
+// own window and gives back the final https://<id>.chromiumapp.org/ address,
+// which carries the account in its fragment (see backend/src/routes/auth.js).
+// Runs here rather than in the popup, because the popup closes as soon as the
+// sign-in window takes focus.
+async function signIn() {
+  const { backendUrl } = await chrome.storage.local.get("backendUrl");
+  const base = trimUrl(backendUrl) || DEFAULT_BACKEND_URL;
+  const url = `${base}/auth/login?ext=${encodeURIComponent(chrome.runtime.id)}`;
+
+  await chrome.storage.local.remove("authError");
+  try {
+    const redirect = await chrome.identity.launchWebAuthFlow({ url, interactive: true });
+    const params = new URLSearchParams(new URL(redirect).hash.slice(1));
+    const userId = params.get("userId");
+    if (!userId) throw new Error("Sign-in didn't return an account.");
+    await chrome.storage.local.set({ userId, email: params.get("email") || null });
+    return { ok: true };
+  } catch (err) {
+    // Includes closing the window, and the backend refusing the account or
+    // this extension's ID (the flow then ends on an error page, not a redirect).
+    const message =
+      /did not approve|closed|cancel/i.test(err.message)
+        ? "Sign-in was cancelled."
+        : "Sign-in didn't finish. Check that this Google account and this extension's ID are allowed on the backend.";
+    console.warn("Sign-in failed:", err.message);
+    await chrome.storage.local.set({ authError: message });
+    return { ok: false, error: message };
+  }
+}
+
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === "GET_AUTH_STATE") {
-    chrome.storage.local.get(SETTINGS_KEYS, (data = {}) => {
-      if (chrome.runtime.lastError) {
-        sendResponse({ error: chrome.runtime.lastError.message });
-        return;
-      }
-      sendResponse({
-        userId: data.userId || null,
-        email: data.email || null,
-        backendUrl: data.backendUrl || DEFAULT_BACKEND_URL,
-        apiKey: data.apiKey || null,
-      });
-    });
+    chrome.storage.local.get(SETTINGS_KEYS).then(
+      (data) =>
+        sendResponse({
+          userId: data.userId || null,
+          email: data.email || null,
+          backendUrl: data.backendUrl || null, // null: not set up yet
+          apiKey: data.apiKey || null,
+          authError: data.authError || null,
+        }),
+      (err) => sendResponse({ error: err.message })
+    );
     return true; // async sendResponse
   }
 
-  if (message.type === "START_AUTH") {
-    // Open the backend's auth URL in a new tab
-    chrome.storage.local.get(["backendUrl"], (data) => {
-      if (chrome.runtime.lastError) {
-        sendResponse({ started: false, error: chrome.runtime.lastError.message });
-        return;
-      }
-      const base = (data?.backendUrl || DEFAULT_BACKEND_URL).replace(/\/+$/, "");
-      chrome.tabs.create({ url: `${base}/auth/login` });
-      sendResponse({ started: true });
-    });
+  if (message.type === "SAVE_SETTINGS") {
+    chrome.storage.local
+      .set({ backendUrl: trimUrl(message.backendUrl), apiKey: message.apiKey?.trim() || null })
+      .then(() => sendResponse({ saved: true }));
     return true;
   }
 
-  if (message.type === "SET_AUTH_STATE") {
-    chrome.storage.local.set({
-      userId: message.userId,
-      email: message.email,
-    });
-    sendResponse({ saved: true });
+  if (message.type === "START_AUTH") {
+    signIn().then(sendResponse);
     return true;
   }
 
   if (message.type === "LOGOUT") {
-    chrome.storage.local.remove(["userId", "email"], () => {
-      sendResponse({ cleared: true });
-    });
+    chrome.storage.local.remove(["userId", "email", "authError"]).then(() => sendResponse({ cleared: true }));
     return true;
   }
 });
-
-// Listen for the auth callback page to send a message via BroadcastChannel.
-// Since service workers can't use BroadcastChannel, we instead poll
-// chrome.storage for changes or use chrome.runtime.onMessageExternal.
-// For MVP, the popup polls the backend or the user manually closes the tab.
-
-console.log("Calendar Grouper background worker initialized");
