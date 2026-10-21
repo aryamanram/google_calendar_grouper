@@ -37,7 +37,7 @@ Choose **Alerts only** for this budget, and keep **Free tier credits** checked u
 
 A budget only *emails* you; it doesn't stop spending. At this project's size you should never see one of these emails. If you do, something is looping, and you want to know about it.
 
-**Optional hard stop:** create a second budget with **Spend cap enforcement**, service **Cloud Run** only, amount **$10**. Spend caps currently cover only a few services, Cloud Run among them. They count cost *before* the free tier, and your auto-sync is roughly $1/month gross, so a $1 cap would pause syncing even though you pay nothing. $10 only trips if something runs away.
+**Optional spending safeguard:** create a second budget with **Spend cap enforcement**, service **Cloud Run** only, amount **$10**. Spend caps currently cover only a few services, Cloud Run among them. A cap pauses Cloud Run once *estimated* spending reaches the target, but enforcement and billing data lag, so charges can go somewhat past $10. Caps also count cost *before* the free tier. Your auto-sync is roughly $1/month gross, so a $1 cap could pause syncing even though you pay nothing. Treat $10 as a brake on runaway usage, not a guaranteed maximum bill.
 
 ### 0c. Variables (re-run these if you open a new Terminal)
 ```bash
@@ -158,6 +158,8 @@ Because the app isn't verified, sign-in shows a "Google hasn't verified this app
 
 This saves a fresh, non-expiring token in Firestore. Only `aryamanramchandran@gmail.com` is allowed to sign in (`ALLOWED_EMAILS`).
 
+Signing in doesn't tell the extension who you are: the sign-in page doesn't hand your user ID back to the extension yet. An extension you already set up (SETUP_GUIDE Phase 7) keeps working. A **fresh install** needs the Phase 7 step once, setting `userId` and `email` in the service worker console. Until then the popup shows the sign-in screen and loads no calendars.
+
 ---
 
 ## 5 — Schedule the 2-minute check
@@ -177,12 +179,12 @@ sleep 15
 gcloud logging read "resource.type=cloud_run_revision AND resource.labels.service_name=$SERVICE" \
   --limit 20 --freshness 10m --format='value(textPayload)'
 ```
-An error-free log means it's working. When events changed, you'll see lines like `Auto-sync "My full schedule": 1 change(s) applied`. A check that finds nothing prints nothing, so to confirm the checks themselves are succeeding, look at the request log:
+When events changed, you'll see lines like `Auto-sync "My full schedule": 1 change(s) applied`, and failures show up as `Auto-sync failed for "<name>": …`. A check that finds nothing prints nothing, so to confirm the checks are running at all, look at the request log:
 ```bash
 gcloud logging read "resource.type=cloud_run_revision AND resource.labels.service_name=$SERVICE AND httpRequest.requestUrl:\"/internal/tick\"" \
   --limit 5 --freshness 1h --format='value(timestamp,httpRequest.status,httpRequest.latency)'
 ```
-You want a **200** every 2 minutes. A **401** means the tick secret doesn't match.
+You want a **200** every 2 minutes. A **401** means the tick secret doesn't match. A 200 only means the check *ran*; it still returns 200 when a calendar's sync failed. So also make sure the application log above has no `Auto-sync failed` lines.
 
 ---
 
@@ -267,7 +269,7 @@ Delete the shared calendar from the popup first if you no longer want it.
 | Deploy succeeds but `/health` fails, and logs say `Cloud mode needs these environment variables` | A variable from step 2 was empty. `echo $CLIENT_ID $EXT_ID $URL` and redeploy |
 | `redirect_uri_mismatch` at sign-in | Step 3.1: the URI must exactly match `$URL/auth/callback` |
 | Popup: "The backend rejected the API key" | `apiKey` in step 6 doesn't match: `gcloud secrets versions access latest --secret=API_KEY` |
-| Popup: "Can't reach the backend" | `backendUrl` typo, or a trailing slash |
+| Popup: "Can't reach the backend" | `backendUrl` typo (a trailing slash is fine; the popup strips it) |
 | Popup: "Failed to fetch" | The popup is an old build that only knows `localhost`. Run `npm run build` in `extension/popup` and reload the extension (step 6.0) |
 | `--region: expected one argument` / `No host part in the URL` | The step 0c variables aren't set in this Terminal window. Re-run the 0c block |
 | "Invalid Origin: URIs must not contain a path" | The redirect URI is in *Authorized JavaScript origins*. Move it to *Authorized redirect URIs* (step 3.1) |
