@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 440 330" role="img" aria-labelledby="t d">
+  <title id="t">Several calendars combined into one shared calendar</title>
+  <desc id="d">Work, School, Family and Workout calendars feed into a single "My full schedule" calendar. Workout is shared as busy-only and appears as gray Busy blocks. Food is left out.</desc>
+  <defs>
+    <filter id="s" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="1" stdDeviation="1.4" flood-color="#3c4043" flood-opacity=".18"/>
+    </filter>
+  </defs>
+  <style>
+    text { font-family: Roboto, "Segoe UI", system-ui, sans-serif; }
+    .chip { fill: #fff; stroke: #dadce0; }
+    .lbl { font-size: 13px; fill: #3c4043; }
+    .off { opacity: .45; }
+    .flow { fill: none; stroke-width: 2; stroke-linecap: round; opacity: .55; }
+    .card { fill: #fff; stroke: #dadce0; }
+    .day { font-size: 10px; fill: #70757a; text-anchor: middle; }
+    .ev { font-size: 9px; fill: #fff; font-weight: 500; }
+    .busy { fill: #9aa0a6; }
+  </style>
+
+  <!-- Source calendars -->
+  <g filter="url(#s)">
+    <rect class="chip" x="6" y="34" width="122" height="34" rx="17"/>
+    <rect class="chip" x="6" y="90" width="122" height="34" rx="17"/>
+    <rect class="chip" x="6" y="146" width="122" height="34" rx="17"/>
+    <rect class="chip" x="6" y="202" width="122" height="34" rx="17"/>
+    <rect class="chip off" x="6" y="258" width="122" height="34" rx="17"/>
+  </g>
+  <rect x="20" y="44" width="14" height="14" rx="3" fill="#0b8043"/>
+  <path d="M23 51l3 3 5-6" stroke="#fff" stroke-width="2" fill="none"/>
+  <text class="lbl" x="44" y="56">Work</text>
+  <rect x="20" y="100" width="14" height="14" rx="3" fill="#3f51b5"/>
+  <path d="M23 107l3 3 5-6" stroke="#fff" stroke-width="2" fill="none"/>
+  <text class="lbl" x="44" y="112">School</text>
+  <rect x="20" y="156" width="14" height="14" rx="3" fill="#f4511e"/>
+  <path d="M23 163l3 3 5-6" stroke="#fff" stroke-width="2" fill="none"/>
+  <text class="lbl" x="44" y="168">Family</text>
+  <rect x="20" y="212" width="14" height="14" rx="3" fill="#8e24aa"/>
+  <path d="M23 219l3 3 5-6" stroke="#fff" stroke-width="2" fill="none"/>
+  <text class="lbl" x="44" y="224">Workout</text>
+  <circle cx="114" cy="219" r="4" fill="#ea4335"/>
+  <g class="off">
+    <rect x="20" y="268" width="14" height="14" rx="3" fill="none" stroke="#5f6368" stroke-width="1.5"/>
+    <text class="lbl" x="44" y="280">Food</text>
+  </g>
+
+  <!-- Flows -->
+  <path class="flow" stroke="#0b8043" d="M128 51 C 170 51, 170 150, 214 150"/>
+  <path class="flow" stroke="#3f51b5" d="M128 107 C 170 107, 172 158, 214 158"/>
+  <path class="flow" stroke="#f4511e" d="M128 163 C 170 163, 172 166, 214 166"/>
+  <path class="flow" stroke="#8e24aa" d="M128 219 C 170 219, 172 174, 214 174"/>
+
+  <!-- Shared calendar -->
+  <g filter="url(#s)">
+    <rect class="card" x="214" y="40" width="220" height="250" rx="14"/>
+  </g>
+  <rect x="214" y="40" width="220" height="44" rx="14" fill="#e8f0fe"/>
+  <rect x="214" y="70" width="220" height="14" fill="#e8f0fe"/>
+  <rect x="228" y="54" width="16" height="16" rx="4" fill="#1a73e8"/>
+  <text x="252" y="67" style="font-size:13px;font-weight:500" fill="#174ea6">My full schedule</text>
+
+  <g>
+    <text class="day" x="250" y="102">MON</text>
+    <text class="day" x="295" y="102">TUE</text>
+    <text class="day" x="340" y="102">WED</text>
+    <text class="day" x="385" y="102">THU</text>
+    <line x1="228" y1="110" x2="420" y2="110" stroke="#eceff1"/>
+    <line x1="272" y1="110" x2="272" y2="278" stroke="#f1f3f4"/>
+    <line x1="317" y1="110" x2="317" y2="278" stroke="#f1f3f4"/>
+    <line x1="362" y1="110" x2="362" y2="278" stroke="#f1f3f4"/>
+  </g>
+
+  <!-- Events -->
+  <rect x="230" y="118" width="40" height="42" rx="5" fill="#0b8043"/>
+  <text class="ev" x="235" y="131">Work</text>
+  <rect x="275" y="118" width="40" height="26" rx="5" fill="#3f51b5"/>
+  <text class="ev" x="280" y="131">Class</text>
+  <rect x="320" y="118" width="40" height="42" rx="5" fill="#0b8043"/>
+  <text class="ev" x="325" y="131">Work</text>
+  <rect x="365" y="128" width="40" height="26" rx="5" fill="#3f51b5"/>
+  <text class="ev" x="370" y="141">Class</text>
+
+  <rect class="busy" x="230" y="170" width="40" height="22" rx="5"/>
+  <text class="ev" x="235" y="184">Busy</text>
+  <rect class="busy" x="320" y="170" width="40" height="22" rx="5"/>
+  <text class="ev" x="325" y="184">Busy</text>
+  <rect x="275" y="158" width="40" height="34" rx="5" fill="#3f51b5"/>
+  <text class="ev" x="280" y="171">Lab</text>
+
+  <rect x="275" y="214" width="85" height="26" rx="5" fill="#f4511e"/>
+  <text class="ev" x="280" y="230">Family dinner</text>
+  <rect class="busy" x="365" y="200" width="40" height="22" rx="5"/>
+  <text class="ev" x="370" y="214">Busy</text>
+  <rect x="230" y="246" width="40" height="26" rx="5" fill="#3f51b5"/>
+  <text class="ev" x="235" y="262">Study</text>
+</svg>

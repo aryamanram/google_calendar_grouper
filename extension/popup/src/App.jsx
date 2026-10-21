@@ -4,7 +4,7 @@ import React, { useState, useEffect, useCallback } from "react";
 // Config
 //
 // The backend URL and API key live in chrome.storage.local (set once from the
-// service worker console, see SETUP_GUIDE "Deploy"), so switching between the
+// service worker console, see site/self-hosting/deploy.md), so switching between the
 // local and cloud backend needs no rebuild. Defaults to the local backend.
 // ---------------------------------------------------------------------------
 const DEFAULT_BACKEND_URL = "http://localhost:3000";

@@ -4,3 +4,7 @@ dist/
 *.key
 service-account-key.json
 .DS_Store
+
+# Website
+site/.vitepress/cache/
+.firebase/
