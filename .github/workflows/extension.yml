@@ -1,0 +1,61 @@
+name: Extension
+
+# Builds the extension zip on every change to it, and attaches the zip to
+# each GitHub release (for people who load it by hand instead of using the
+# Chrome Web Store).
+on:
+  push:
+    branches: [main]
+    paths: ["extension/**", "scripts/package-extension.sh", ".github/workflows/extension.yml"]
+  pull_request:
+    paths: ["extension/**", "scripts/package-extension.sh", ".github/workflows/extension.yml"]
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  # Builds untrusted pull-request code too, so it gets a read-only token.
+  package:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      zip: ${{ steps.zip.outputs.name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: extension/popup/package-lock.json
+      - id: zip
+        run: |
+          path="$(./scripts/package-extension.sh | head -n 1)"
+          echo "path=$path" >> "$GITHUB_OUTPUT"
+          echo "name=$(basename "$path")" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: extension
+          path: ${{ steps.zip.outputs.path }}
+
+  # Only for published releases: no checkout, no build, just the upload.
+  release:
+    needs: package
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: extension
+      - run: gh release upload "$RELEASE_TAG" "$ZIP" --clobber --repo "$REPO"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          ZIP: ${{ needs.package.outputs.zip }}
+          REPO: ${{ github.repository }}

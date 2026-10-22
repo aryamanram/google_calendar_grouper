@@ -27,7 +27,7 @@ Changes you make to your calendars appear on the shared calendar within about tw
 
 ## Status
 
-Calendar Grouper is **open source and self-hosted**. There's no public service to sign up for: you run your own copy of the backend in your own Google Cloud project, and you decide which Google accounts may use it. A partner or family member can use your copy too, with their calendars kept separate from yours.
+Calendar Grouper is **open source and self-hosted**. There's no public service to sign up for: you run your own copy of the backend in your own Google Cloud project, and invite whoever you like from the extension: a partner, family, friends. Each of them installs the extension, opens your invite link and signs in with Google, and their calendars stay separate from yours.
 
 For a handful of people checked every two minutes, the backend stays within Google Cloud's free tier. See [What does it cost?](./faq#what-does-it-cost)
 

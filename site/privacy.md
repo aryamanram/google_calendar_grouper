@@ -27,14 +27,16 @@ Calendar Grouper keeps a small amount of data in a Google Cloud Firestore databa
 | Data | Why |
 |---|---|
 | Google sign-in tokens | To sync your calendars while you're away |
-| Your Google account ID | To link your settings to your account |
+| Your Google account ID and email | To link your settings to your account, and to check you still have access |
+| A hash of each extension session token | To recognize your extension's requests. The token itself isn't stored |
+| The emails of people an owner invited, and who invited them | To decide who may sign in |
 | Shared calendar settings: its name, the IDs and names of the calendars you selected, each calendar's detail level, and the email addresses you share it with | To remember your choices |
 | Event ID pairs (an original event's ID and its copy's ID) with a last-modified timestamp | To update and remove copies correctly, and to skip events that haven't changed |
 | Sync status: progress markers, the last sync time and any error message | To sync only what changed, and to show sync status |
 
 **Event contents aren't stored by Calendar Grouper.** Titles, descriptions and locations are read from your selected calendars and written straight into the shared calendar, which lives in your own Google account. They never go into Calendar Grouper's database. For calendars set to "busy", only the times are copied.
 
-The extension also keeps a few settings in your browser (`chrome.storage.local`): the backend address, its API key, and the signed-in account's ID and email. **Sign out** removes the account ID and email; removing the extension deletes all of it.
+The extension also keeps a few settings in your browser (`chrome.storage.local`): the backend address, your session token, and the signed-in account's ID and email. **Sign out** removes the token, ID and email, and ends the session on the backend; removing the extension deletes all of it. The extension reads web pages only on `calendargrouper.com/join`, to pick up an invite link you opened.
 
 Server logs record calendar names, event counts and errors, and are kept under Google Cloud's default log retention. They don't contain event contents.
 
@@ -44,7 +46,7 @@ This website uses no cookies, analytics or tracking. It's served by Firebase Hos
 
 ## Sharing
 
-The shared calendar's events are visible to the people you choose to share it with, through Google Calendar's normal sharing. Calendar Grouper doesn't sell, rent or share your data with anyone. It shows no ads and includes no analytics or tracking. It runs on Google Cloud (Cloud Run, Firestore, Secret Manager), which processes this data on the operator's behalf.
+The shared calendar's events are visible to the people you choose to share it with, through Google Calendar's normal sharing. Calendar Grouper doesn't sell or rent your data, use it for advertising, or disclose it for any purpose unrelated to the features described here. It shows no ads and includes no analytics or tracking. The only party that processes it is Google Cloud (Cloud Run, Firestore, Secret Manager), as the operator's service provider.
 
 ## Google API Services User Data Policy
 

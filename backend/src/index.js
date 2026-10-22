@@ -7,10 +7,11 @@ const authRoutes = require("./routes/auth");
 const groupRoutes = require("./routes/groups");
 const webhookRoutes = require("./routes/webhooks");
 const shareRoutes = require("./routes/share");
+const peopleRoutes = require("./routes/people");
 const { initFirestore } = require("./models/firestore");
 const { startWatchRenewalJob } = require("./services/watchManager");
 const { startAutoSync, pollOnce } = require("./services/autoSync");
-const { requireApiKey, requireTickSecret } = require("./middleware/auth");
+const { requireSession, requireOwner, requireTickSecret } = require("./middleware/auth");
 const { IS_CLOUD, RUN_MODE } = require("./runMode");
 const { allowedEmails, extensionIds } = require("./config");
 
@@ -23,13 +24,18 @@ const PORT = process.env.PORT || 3000;
 app.use(helmet());
 app.use(
   cors({
-    // Every installed copy of the extension has its own ID, so EXTENSION_ID
-    // can list several (one per person using this backend).
-    origin: [
-      ...extensionIds().map((id) => `chrome-extension://${id}`),
-      "http://localhost:5173", // Vite dev server for popup
-    ],
-    credentials: true,
+    // Requests are authorized by the session token, not by where they come
+    // from, so any copy of the extension may call the backend. EXTENSION_ID,
+    // if set, narrows this to the listed copies.
+    origin(origin, callback) {
+      const ids = extensionIds();
+      const ok =
+        !origin || // not a browser request (curl, Cloud Scheduler)
+        origin === "http://localhost:5173" || // Vite dev server for the popup
+        (origin.startsWith("chrome-extension://") &&
+          (ids.length === 0 || ids.includes(origin.slice("chrome-extension://".length))));
+      callback(null, ok);
+    },
   })
 );
 
@@ -43,11 +49,12 @@ app.use((req, res, next) => {
 // ---------------------------------------------------------------------------
 // Routes
 // ---------------------------------------------------------------------------
-// /auth/login and /auth/callback are opened in a browser tab, so they can't
-// send a header; /auth/calendars checks the API key itself (see auth.js).
+// /auth/login and /auth/callback are opened in a browser window, so they
+// can't send a token; the other /auth routes check it themselves.
 app.use("/auth", authRoutes);
-app.use("/groups", requireApiKey, groupRoutes);
-app.use("/share", requireApiKey, shareRoutes);
+app.use("/groups", requireSession, groupRoutes);
+app.use("/share", requireSession, shareRoutes);
+app.use("/people", requireSession, requireOwner, peopleRoutes);
 app.use("/webhooks", webhookRoutes); // called by Google; checked by channel ID
 
 // Cloud Scheduler calls this every couple of minutes in cloud mode. It runs
@@ -62,18 +69,30 @@ app.post("/internal/tick", requireTickSecret, async (_req, res) => {
   }
 });
 
-// Health check
-app.get("/health", (_req, res) => res.json({ status: "ok", mode: RUN_MODE }));
+// Health check. "app" lets the extension confirm an address really is a
+// Calendar Grouper backend before saving it.
+app.get("/health", (_req, res) => res.json({ status: "ok", mode: RUN_MODE, app: "calendar-grouper" }));
+
+// Unexpected errors: log them, and answer with JSON the popup can show.
+// Client mistakes (malformed JSON, a body that's too large) keep their 4xx.
+app.use((err, _req, res, next) => {
+  if (res.headersSent) return next(err);
+  const status = err.status >= 400 && err.status < 500 ? err.status : 500;
+  if (status === 500) {
+    console.error("Request failed:", err);
+    return res.status(500).json({ error: "Something went wrong on the backend. Try again." });
+  }
+  res.status(status).json({ error: "The request was not valid." });
+});
 
 // ---------------------------------------------------------------------------
 // Startup
 // ---------------------------------------------------------------------------
 async function start() {
   if (IS_CLOUD) {
-    const missing = ["API_KEY", "TICK_SECRET", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET",
+    const missing = ["TICK_SECRET", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET",
       "GOOGLE_REDIRECT_URI"].filter((k) => !process.env[k]?.trim());
-    if (extensionIds().length === 0) missing.push("EXTENSION_ID");
-    // An empty allow-list would let any Google account sign in.
+    // ALLOWED_EMAILS names the owners. Without it, any Google account could sign in.
     if (allowedEmails().length === 0) missing.push("ALLOWED_EMAILS");
     if (missing.length) {
       throw new Error(`Cloud mode needs these environment variables: ${missing.join(", ")}`);

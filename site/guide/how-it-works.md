@@ -33,9 +33,10 @@ Busy-only calendars copy only the start and end time, titled "Busy".
 
 ## Security
 
-- Every request from the extension carries an API key. The scheduled check carries its own separate secret.
-- Only the Google accounts you list are allowed to sign in.
-- Secrets (the OAuth client secret, the API key and the scheduler secret) live in Google Secret Manager, never in the code or the container.
+- **Who can sign in:** the backend's owners (set when it's deployed) and the people they invite from the extension. Anyone else is turned away at sign-in.
+- **Sessions:** signing in gives that copy of the extension its own random session token, sent with every request. The backend works out who you are from the token, so nobody can act as someone else. Only a hash of each token is stored. Removing someone ends their sessions at once.
+- **Invite links** only carry the backend's address. A page on calendargrouper.com hands it to the extension, which checks it's a Calendar Grouper backend before connecting.
+- The scheduled check carries its own secret, and secrets (the OAuth client secret and the scheduler secret) live in Google Secret Manager, never in the code or the container.
 - See the [privacy policy](/privacy) for exactly what's stored.
 
 ## Source

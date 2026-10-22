@@ -129,10 +129,7 @@ FIRESTORE_PROJECT_ID=<project ID from 1a>
 PORT=3000
 BACKEND_URL=http://localhost:3000
 
-EXTENSION_ID=
 ```
-
-Leave `EXTENSION_ID` blank for now; you'll fill it in during Phase 6.
 
 Then install and start the server:
 
@@ -185,20 +182,16 @@ Then load it in Chrome:
 
 1. Go to `chrome://extensions` → turn on **Developer mode** (toggle in the top right).
 2. Click **Load unpacked** → select the **`extension/`** folder (the one containing `manifest.json`, not `popup/`).
-3. Copy the extension's **ID** from its card.
-4. Paste it into `backend/.env` as `EXTENSION_ID=<id>`.
-5. In the backend terminal, press **Ctrl+C**, then run `npm run dev` again to restart it with the new value.
-
 If the popup opens blank, right-click inside it → **Inspect** → **Console** tab to see the error.
 
-**✅ Checkpoint:** The extension is loaded, its ID is in `.env`, and the backend has been restarted.
+**✅ Checkpoint:** The extension's card appears in `chrome://extensions` with no errors.
 
 ---
 
 ## Phase 7 — Connect the extension and sign in
 
-1. Click the extension icon in the toolbar. The popup shows **Connect to your backend**.
-2. Leave **Backend address** as `http://localhost:3000` and **API key** empty, then click **Save**.
+1. Click the extension icon in the toolbar. The popup shows **Connect**.
+2. Paste `http://localhost:3000` and click **Connect**.
 3. Click **Sign in with Google**. Google's consent screen opens in its own window; approve it as in Phase 5. The window closes on its own.
 4. Open the popup again. Your real calendars should load, each with a checkbox and a detail dot.
 
@@ -217,14 +210,7 @@ If the popup opens blank, right-click inside it → **Inspect** → **Console** 
    - `Synced "Work": +N added ...` means it worked.
    - `Watch not registered for ...` is **expected on localhost** and is not a bug. Live webhooks need a public, verified HTTPS domain, which is a later milestone.
 3. Open Google Calendar. The merged calendar should appear, containing your events.
-4. New, edited and deleted events sync on their own. The backend checks every 2 minutes (`SYNC_POLL_SECONDS` in `.env`), so a change shows up on the shared calendar within a couple of minutes. To sync immediately, click **Sync now** in the popup, or use `curl` (your user ID is the name of your Firestore `users` document from Phase 5):
-   ```bash
-   curl "http://localhost:3000/groups?userId=YOUR_USER_ID"
-   # copy the group's "id" from the output, then:
-   curl -X POST http://localhost:3000/groups/GROUP_ID/sync \
-     -H "Content-Type: application/json" \
-     -d '{"userId":"YOUR_USER_ID"}'
-   ```
+4. New, edited and deleted events sync on their own. The backend checks every 2 minutes (`SYNC_POLL_SECONDS` in `.env`), so a change shows up on the shared calendar within a couple of minutes. To sync immediately, click **Sync now** in the popup.
 5. Test the full cycle: add an event to Work and wait about 2 minutes. It appears on the shared calendar. Delete it, and it disappears on the next check. Editing or deleting a single occurrence of a repeating event works the same way.
 
 **✅ Checkpoint:** The merged calendar mirrors the calendars you selected, and changes appear within a couple of minutes without any manual step.
@@ -261,6 +247,6 @@ Everything above runs on your laptop. To keep syncing while it's off, follow **[
 | Backend crashes on start | 4 | The key file path and the project ID in `.env` |
 | Calendar API 403 / insufficient scopes | 5 | The Calendar checkbox was ticked during consent; sign in again |
 | Blank popup | 6 | Inspect the popup → Console for the error |
-| CORS error in popup | 6 | `EXTENSION_ID` matches the loaded extension, and the backend was restarted |
+| CORS error in popup | 7 | `EXTENSION_ID` is set in `.env` and doesn't include this extension's ID. Remove it |
 | "Watch not registered" | 8 | Expected on localhost; auto-sync covers it |
 | New events don't appear | 8 | Wait 2 minutes or click **Sync now**; check the backend log for "Auto-sync failed" |

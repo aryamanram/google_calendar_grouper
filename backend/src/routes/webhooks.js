@@ -2,7 +2,8 @@ const express = require("express");
 const router = express.Router();
 const { getWatchChannel } = require("../models/firestore");
 const { syncSourceCalendar } = require("../services/calendarSync");
-const { getGroup, updateGroup } = require("../models/firestore");
+const { getUser, getGroup, updateGroup } = require("../models/firestore");
+const access = require("../services/access");
 const locks = require("../services/syncLocks");
 
 // ---------------------------------------------------------------------------
@@ -50,6 +51,12 @@ router.post("/calendar", async (req, res) => {
     }
 
     const { userId, groupId, sourceCalendarId } = channel;
+
+    // Only sync for someone who still has access. Fails closed: an account
+    // with no recorded email is skipped here (auto-sync still covers it
+    // until they sign in again, which records the email).
+    const user = await getUser(userId);
+    if (!user?.email || !(await access.isAllowed(user.email))) return;
 
     if (locks.isBusy(groupId)) return;
 

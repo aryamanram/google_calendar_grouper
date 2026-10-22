@@ -46,8 +46,12 @@ Each copy of Calendar Grouper signs in through its owner's own Google Cloud proj
 
 ## Can I sign up without setting anything up?
 
-No. There's no public Calendar Grouper service. To use it, you [run your own copy](/self-hosting/setup), or use the copy of someone who has added you.
+No. There's no public Calendar Grouper service. To use it, someone who [runs their own copy](/self-hosting/setup) invites you, or you run one yourself and invite whoever you like.
+
+## Is the invite link a password?
+
+No. It only tells your extension where the backend is. What lets you in is your Google account being on the backend's list, which the person who invited you controls.
 
 ## Can two people share their schedules with each other?
 
-Yes. Each person creates their own shared calendar and shares it with the other. Both can use the same backend: the person who runs it adds the second person's account and extension (see [Adding another person](/self-hosting/deploy#adding-another-person)). Each person picks and controls only their own source calendars and settings; what the other person sees is the shared calendar you chose to share with them.
+Yes. Each person creates their own shared calendar and shares it with the other. Both can use the same backend: the person who runs it [invites](./using#invite-people) the other. Each person picks and controls only their own source calendars and settings; what the other person sees is the shared calendar you chose to share with them.
