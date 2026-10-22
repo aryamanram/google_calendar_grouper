@@ -46,7 +46,7 @@ This website uses no cookies, analytics or tracking. It's served by Firebase Hos
 
 ## Sharing
 
-The shared calendar's events are visible to the people you choose to share it with, through Google Calendar's normal sharing. Calendar Grouper doesn't sell, rent or share your data with anyone. It shows no ads and includes no analytics or tracking. It runs on Google Cloud (Cloud Run, Firestore, Secret Manager), which processes this data on the operator's behalf.
+The shared calendar's events are visible to the people you choose to share it with, through Google Calendar's normal sharing. Calendar Grouper doesn't sell or rent your data, use it for advertising, or disclose it for any purpose unrelated to the features described here. It shows no ads and includes no analytics or tracking. The only party that processes it is Google Cloud (Cloud Run, Firestore, Secret Manager), as the operator's service provider.
 
 ## Google API Services User Data Policy
 

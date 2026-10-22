@@ -33,8 +33,15 @@ onMounted(() => {
   readInvite();
   window.addEventListener("hashchange", readInvite);
   window.addEventListener("calendar-grouper", onEvent);
+  // The extension may have answered before this page rendered.
   const current = document.documentElement.dataset.calendarGrouper;
-  if (current && current !== "installed") state.value = current;
+  if (current) {
+    let detail = {};
+    try {
+      detail = JSON.parse(document.documentElement.dataset.calendarGrouperDetail || "{}");
+    } catch {}
+    apply({ ...detail, state: current });
+  }
   // No word from the extension after a moment: it isn't installed.
   setTimeout(() => {
     if (state.value === "checking") state.value = installed() ? "checking" : "missing";
@@ -79,6 +86,11 @@ async function copyLink() {
   <p class="join-note">If Google says the app isn't verified, click <strong>Advanced</strong>, then <strong>Go to Calendar Grouper</strong>. It's normal for a privately hosted copy.</p>
 </div>
 
+<div v-else-if="state === 'pending'" class="join-card">
+  <p class="join-status">Confirm in the extension</p>
+  <p>Your extension is already connected to another backend. Click the <strong>Calendar Grouper</strong> icon in Chrome's toolbar and choose <strong>Switch</strong> to use <strong>{{ host }}</strong> instead, or <strong>Keep current</strong>.</p>
+</div>
+
 <div v-else-if="state === 'error'" class="join-card bad">
   <p class="join-status">Couldn't connect</p>
   <p>{{ error }}</p>
@@ -99,7 +111,7 @@ async function copyLink() {
 
 ## What happens next
 
-- You sign in with your own Google account. The person who invited you can't see your calendars.
+- You sign in with your own Google account. The extension doesn't show your calendars to the person who invited you, but their backend holds your Google sign-in, so join only if you trust them.
 - You pick which of your calendars to combine, and share the result with whoever you like.
 - See [Using Calendar Grouper](/guide/using) for the details.
 

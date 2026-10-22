@@ -8,8 +8,11 @@
 // ---------------------------------------------------------------------------
 (() => {
   const root = document.documentElement;
+  // State and details go on <html> too, so the page can read them if it
+  // renders after this runs and misses the event.
   const announce = (state, detail = {}) => {
     root.dataset.calendarGrouper = state;
+    root.dataset.calendarGrouperDetail = JSON.stringify(detail);
     window.dispatchEvent(new CustomEvent("calendar-grouper", { detail: { state, ...detail } }));
   };
 
@@ -21,6 +24,8 @@
         announce("error", { error: "The extension didn't respond. Reload this page to try again." });
       } else if (result.ok) {
         announce("connected", { backendUrl: result.backendUrl });
+      } else if (result.pending) {
+        announce("pending", { backendUrl: result.backendUrl });
       } else {
         announce("error", { error: result.error });
       }

@@ -210,14 +210,7 @@ If the popup opens blank, right-click inside it → **Inspect** → **Console** 
    - `Synced "Work": +N added ...` means it worked.
    - `Watch not registered for ...` is **expected on localhost** and is not a bug. Live webhooks need a public, verified HTTPS domain, which is a later milestone.
 3. Open Google Calendar. The merged calendar should appear, containing your events.
-4. New, edited and deleted events sync on their own. The backend checks every 2 minutes (`SYNC_POLL_SECONDS` in `.env`), so a change shows up on the shared calendar within a couple of minutes. To sync immediately, click **Sync now** in the popup, or use `curl` (your user ID is the name of your Firestore `users` document from Phase 5):
-   ```bash
-   curl "http://localhost:3000/groups?userId=YOUR_USER_ID"
-   # copy the group's "id" from the output, then:
-   curl -X POST http://localhost:3000/groups/GROUP_ID/sync \
-     -H "Content-Type: application/json" \
-     -d '{"userId":"YOUR_USER_ID"}'
-   ```
+4. New, edited and deleted events sync on their own. The backend checks every 2 minutes (`SYNC_POLL_SECONDS` in `.env`), so a change shows up on the shared calendar within a couple of minutes. To sync immediately, click **Sync now** in the popup.
 5. Test the full cycle: add an event to Work and wait about 2 minutes. It appears on the shared calendar. Delete it, and it disappears on the next check. Editing or deleting a single occurrence of a repeating event works the same way.
 
 **✅ Checkpoint:** The merged calendar mirrors the calendars you selected, and changes appear within a couple of minutes without any manual step.

@@ -75,4 +75,4 @@ One listing serves everyone: the extension works with any Calendar Grouper backe
 ## After it's approved
 
 1. Put the store link in `site/guide/install.md` (replace "on its way") and in the join page's install step (`site/join.md`).
-2. Optional: so copies loaded from GitHub get the same ID as the store version, copy the item's **public key** (Dashboard → item → **Package → View public key**) into `manifest.json` as `"key"`. The ID doesn't affect invites or sign-in, so this is only for tidiness.
+2. Optional: so copies loaded from GitHub get the same ID as the store version, copy the item's **public key** (Dashboard → item → **Package → View public key**) into `manifest.json` as `"key"`. With the default backend settings the ID doesn't matter. It does if a backend sets `EXTENSION_ID`: then only the listed IDs can sign in, so either add this key first (every copy then shares the store's ID) or add each GitHub-loaded copy's ID to `EXTENSION_ID`.

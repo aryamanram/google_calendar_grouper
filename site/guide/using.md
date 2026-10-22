@@ -60,7 +60,7 @@ If you run the backend (you're an owner), the popup shows **People with access**
 1. Enter someone's Google account email and click **Add**.
 2. Click **Copy invite link** and send it to them.
 
-They sign in with their own Google account and build their own shared calendar. They can't see your calendars, and you can't see theirs, unless one of you shares a calendar with the other. To remove someone, click **✕**: they're signed out at once, and their shared calendar stops updating.
+They sign in with their own Google account and build their own shared calendar. The extension never shows one person's calendars to another; you each see only what the other shares with you through Google Calendar. Your backend does hold everyone's Google sign-in, though, so only invite people who trust you to run it, and only join a backend run by someone you trust. To remove someone, click **✕**: they're signed out at once, and their shared calendar stops updating.
 
 ## Delete the shared calendar
 

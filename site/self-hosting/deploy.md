@@ -111,7 +111,7 @@ gcloud run deploy $SERVICE --source backend --region $REGION \
 - The first build takes 2–4 minutes.
 
 What the flags mean:
-- `--allow-unauthenticated`: the extension and Google's sign-in page must be able to reach the backend. What keeps it private: only owners and people they invite can sign in, every request needs that person's session, and syncs need the tick secret.
+- `--allow-unauthenticated`: the extension and Google's sign-in page must be able to reach the backend. What keeps it private: only owners and people they invite can sign in, every API request about calendars or people needs that person's session, and `/internal/tick` needs the tick secret. Only `/health` and the sign-in pages are open.
 - `--max-instances 1`: normally one copy of the backend, which also caps cost. Cloud Run can briefly run a second copy, for example during a deploy. A lock stored in Firestore (`syncLocks`) makes sure only one copy ever syncs a given calendar at a time.
 - `--min-instances 0`: nothing runs, and nothing is billed, between requests.
 - `--timeout 900`: gives a large first copy up to 15 minutes.
@@ -138,7 +138,7 @@ In the Cloud console, open **Google Auth Platform**:
 
 Why publish: while the app is in *Testing*, Google expires the backend's access after 7 days, and syncing would silently stop every week. Once published, the access lasts until you revoke it.
 
-Because the app isn't verified, sign-in shows a "Google hasn't verified this app" warning, and at most 100 people could ever use it. Neither matters for a personal backend: only the accounts in `ALLOWED_EMAILS` can sign in, and you don't need to submit it for verification.
+Because the app isn't verified, sign-in shows a "Google hasn't verified this app" warning, and at most 100 people could ever use it. Neither matters for a personal backend: only the owners in `ALLOWED_EMAILS` and the people they invite can sign in, and you don't need to submit it for verification.
 
 ---
 

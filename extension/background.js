@@ -8,6 +8,8 @@
 //   userId      the signed-in Google account's ID
 //   email       the signed-in Google account's email
 //   authError   why the last sign-in failed, shown by the popup
+//   pendingInvite  a backend an invite page asked to switch to; the popup
+//                  asks before switching (see JOIN below)
 //
 // Connecting: an invite link (https://calendargrouper.com/join#backend=…)
 // carries the backend's address. Opening it runs join.js on that page, which
@@ -44,13 +46,9 @@ function backendFromInvite(text) {
   }
 }
 
-// Connect to a backend after checking it really is one.
-async function connect(text) {
-  const backendUrl = backendFromInvite(text);
-  if (!backendUrl) {
-    return { ok: false, error: "That doesn't look like an invite link or a backend address." };
-  }
-
+// Check that an address really answers like a Calendar Grouper backend.
+// (Anyone can fake this; it catches typos and dead links, not attackers.)
+async function checkBackend(backendUrl) {
   let health;
   try {
     const res = await fetch(`${backendUrl}/health`);
@@ -58,16 +56,55 @@ async function connect(text) {
   } catch {
     return { ok: false, error: `Can't reach ${backendUrl}. Check the link, or ask the person who sent it.` };
   }
-  if (health?.status !== "ok") {
+  if (health?.status !== "ok" || health?.app !== "calendar-grouper") {
     return { ok: false, error: `${backendUrl} isn't a Calendar Grouper backend.` };
   }
+  return { ok: true };
+}
 
+// Connect to a backend after checking it.
+async function connect(text) {
+  const backendUrl = backendFromInvite(text);
+  if (!backendUrl) {
+    return { ok: false, error: "That doesn't look like an invite link or a backend address." };
+  }
+  const check = await checkBackend(backendUrl);
+  if (!check.ok) return check;
+
+  await chrome.storage.local.remove("pendingInvite");
   const { backendUrl: previous } = await chrome.storage.local.get("backendUrl");
   // A different backend doesn't know this account, so sign in again there.
   const backendChanged = trimUrl(previous) !== backendUrl;
   if (backendChanged) await chrome.storage.local.remove(IDENTITY_KEYS);
   await chrome.storage.local.set({ backendUrl });
   return { ok: true, backendUrl, backendChanged };
+}
+
+// An invite page opened in the browser. Anyone can make such a link, so it
+// connects straight away only when this copy isn't connected yet (or is
+// already connected to that backend). Switching away from a backend signs
+// the person out there, so that waits for a click in the popup.
+async function join(url) {
+  const backendUrl = backendFromInvite(url);
+  if (!backendUrl) return { ok: false, error: "This invite link is incomplete. Ask for a new one." };
+
+  const { backendUrl: current } = await chrome.storage.local.get("backendUrl");
+  if (!current || trimUrl(current) === backendUrl) return connect(backendUrl);
+
+  const check = await checkBackend(backendUrl);
+  if (!check.ok) return check;
+  await chrome.storage.local.set({ pendingInvite: backendUrl });
+  return { ok: false, pending: true, backendUrl };
+}
+
+// Open the popup so the next step is right there. Chrome only allows this in
+// some situations; the invite page also tells people to click the icon.
+async function tryOpenPopup() {
+  try {
+    await chrome.action.openPopup?.();
+  } catch {
+    // Not allowed here; the page explains what to click.
+  }
 }
 
 // Sign in through the backend's Google consent flow. Chrome shows it in its
@@ -124,8 +161,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   switch (message?.type) {
     case "GET_STATE":
       return reply(
-        chrome.storage.local.get(["backendUrl", ...IDENTITY_KEYS]).then((d) => ({
+        chrome.storage.local.get(["backendUrl", "pendingInvite", ...IDENTITY_KEYS]).then((d) => ({
           backendUrl: d.backendUrl || null,
+          pendingInvite: d.pendingInvite || null,
           token: d.token || null,
           userId: d.userId || null,
           email: d.email || null,
@@ -133,17 +171,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }))
       );
 
-    case "CONNECT": // pasted into the popup
+    case "CONNECT": // pasted into the popup, or a confirmed invite
       return reply(connect(message.text));
+
+    case "DISMISS_INVITE":
+      return reply(chrome.storage.local.remove("pendingInvite").then(() => ({ ok: true })));
 
     case "JOIN": // from join.js on an invite page
       if (!sender.tab) return false;
       return reply(
-        connect(message.url).then(async (result) => {
-          // Open the popup so the next step, signing in, is right there.
-          // Chrome only allows this in some situations; the invite page also
-          // tells people to click the extension icon.
-          if (result.ok) chrome.action.openPopup?.().catch(() => {});
+        join(message.url).then(async (result) => {
+          if (result.ok || result.pending) await tryOpenPopup();
           return result;
         })
       );

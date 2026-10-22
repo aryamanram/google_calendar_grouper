@@ -74,10 +74,15 @@ app.post("/internal/tick", requireTickSecret, async (_req, res) => {
 app.get("/health", (_req, res) => res.json({ status: "ok", mode: RUN_MODE, app: "calendar-grouper" }));
 
 // Unexpected errors: log them, and answer with JSON the popup can show.
-// eslint-disable-next-line no-unused-vars
-app.use((err, _req, res, _next) => {
-  console.error("Request failed:", err);
-  res.status(500).json({ error: "Something went wrong on the backend. Try again." });
+// Client mistakes (malformed JSON, a body that's too large) keep their 4xx.
+app.use((err, _req, res, next) => {
+  if (res.headersSent) return next(err);
+  const status = err.status >= 400 && err.status < 500 ? err.status : 500;
+  if (status === 500) {
+    console.error("Request failed:", err);
+    return res.status(500).json({ error: "Something went wrong on the backend. Try again." });
+  }
+  res.status(status).json({ error: "The request was not valid." });
 });
 
 // ---------------------------------------------------------------------------

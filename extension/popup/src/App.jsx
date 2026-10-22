@@ -345,6 +345,7 @@ export default function App() {
   const [inviteText, setInviteText] = useState("");
   const [connecting, setConnecting] = useState(false);
   const [connected, setConnected] = useState(false); // a backend is saved
+  const [pendingInvite, setPendingInvite] = useState(null); // backend an invite asks to switch to
 
   const [signingIn, setSigningIn] = useState(false);
 
@@ -427,6 +428,7 @@ export default function App() {
     send({ type: "GET_STATE" }).then((state) => {
       configure(state); // before setUserId, which triggers the first API call
       setConnected(!!state?.backendUrl);
+      setPendingInvite(state?.pendingInvite || null);
       if (!state?.backendUrl) {
         setShowSetup(true); // not connected to a backend yet
       } else if (state.token) {
@@ -442,6 +444,7 @@ export default function App() {
     // background worker. If the popup is open when they do, pick them up.
     function onChanged(changes, area) {
       if (area !== "local") return;
+      if ("pendingInvite" in changes) setPendingInvite(changes.pendingInvite.newValue || null);
       if (changes.backendUrl?.newValue) {
         configure({ backendUrl: changes.backendUrl.newValue, token: changes.token?.newValue ?? token });
         setConnected(true);
@@ -547,18 +550,20 @@ export default function App() {
     });
   }
 
-  // Connect using a pasted invite link (or a backend address).
-  async function handleConnect(e) {
+  // Connect using a pasted invite link (or a backend address), or the
+  // backend from an invite page once the person confirms the switch.
+  async function handleConnect(e, text = inviteText) {
     e?.preventDefault();
     setConnecting(true);
     setNotice(null);
     try {
-      const result = await send({ type: "CONNECT", text: inviteText });
+      const result = await send({ type: "CONNECT", text });
       if (!result?.ok) throw new Error(result?.error || "Couldn't connect.");
       configure({ backendUrl: result.backendUrl, token: result.backendChanged ? null : token });
       setConnected(true);
       setShowSetup(false);
       setInviteText("");
+      setPendingInvite(null);
       if (result.backendChanged) {
         resetAccount();
         setNotice({ kind: "success", text: "Connected. Now sign in with Google." });
@@ -778,6 +783,44 @@ export default function App() {
       <span style={styles.headerTitle}>Calendar Grouper</span>
     </div>
   );
+
+  const hostOf = (url) => String(url || "").replace(/^https?:\/\//, "");
+
+  if (pendingInvite) {
+    return (
+      <div style={styles.container}>
+        {header}
+        {notice && <div style={styles.notice(notice.kind)}>{notice.text}</div>}
+        <div style={styles.section}>
+          <div style={{ ...styles.sectionLabel, marginTop: 4 }}>Switch backends?</div>
+          <p style={{ ...styles.loginText, textAlign: "left", lineHeight: 1.5 }}>
+            An invite link asks to connect this extension to <strong>{hostOf(pendingInvite)}</strong>. You're
+            connected to <strong>{hostOf(backendUrl)}</strong>.
+          </p>
+          <p style={{ ...styles.hint, lineHeight: 1.5 }}>
+            Switching signs you out here. The new backend will hold your Google sign-in, so only switch if you
+            trust whoever sent the link.
+          </p>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 14 }}>
+            <button
+              style={styles.btnText}
+              disabled={connecting}
+              onClick={() => send({ type: "DISMISS_INVITE" }).then(() => setPendingInvite(null))}
+            >
+              Keep current
+            </button>
+            <button
+              style={{ ...styles.btnPrimary, opacity: connecting ? 0.6 : 1 }}
+              disabled={connecting}
+              onClick={() => handleConnect(null, pendingInvite)}
+            >
+              {connecting ? "Switching…" : "Switch"}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (showSetup) {
     return (
