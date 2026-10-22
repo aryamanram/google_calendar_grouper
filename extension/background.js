@@ -75,7 +75,11 @@ async function connect(text) {
   const { backendUrl: previous } = await chrome.storage.local.get("backendUrl");
   // A different backend doesn't know this account, so sign in again there.
   const backendChanged = trimUrl(previous) !== backendUrl;
-  if (backendChanged) await chrome.storage.local.remove(IDENTITY_KEYS);
+  if (backendChanged) {
+    // End the session on the backend we're leaving (best effort; signOut
+    // doesn't wait for it), then forget it here.
+    await signOut();
+  }
   await chrome.storage.local.set({ backendUrl });
   return { ok: true, backendUrl, backendChanged };
 }

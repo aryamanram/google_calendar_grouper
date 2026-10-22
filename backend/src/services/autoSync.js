@@ -33,7 +33,9 @@ async function pollOnce() {
       if (locks.isBusy(g.id)) continue; // a create/update/webhook is already on it
 
       // Someone removed from the backend stops syncing. Accounts saved before
-      // emails were recorded have none; keep syncing those.
+      // emails were recorded have none; keep syncing those so an upgrade
+      // doesn't silently stop the owner's calendar. Signing in again records
+      // the email, after which the normal check applies.
       if (!allowedUsers.has(g.userId)) {
         const user = await db.getUser(g.userId);
         allowedUsers.set(g.userId, !user?.email || (await access.isAllowed(user.email)));
