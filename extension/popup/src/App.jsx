@@ -47,8 +47,17 @@ async function api(path, options = {}) {
 
 const inExtension = typeof chrome !== "undefined" && !!chrome.runtime?.sendMessage;
 
+// Message the background worker. Reading lastError marks it as handled:
+// when the popup closes mid-request (it does as soon as Google's sign-in
+// window takes focus), Chrome reports "message port closed", which is
+// expected, since the worker carries on and saves the result to storage.
 function send(message) {
-  return new Promise((resolve) => chrome.runtime.sendMessage(message, resolve));
+  return new Promise((resolve) =>
+    chrome.runtime.sendMessage(message, (response) => {
+      if (chrome.runtime.lastError) resolve(null);
+      else resolve(response);
+    })
+  );
 }
 
 const COOLDOWN_MS = 3000; // buttons stay disabled briefly after each action
