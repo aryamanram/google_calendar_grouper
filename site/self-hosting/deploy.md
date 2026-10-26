@@ -149,7 +149,7 @@ Because the app isn't verified, sign-in shows a "Google hasn't verified this app
    ```bash
    open "$URL/auth/login"
    ```
-3. On the warning screen, click **Advanced → Go to Calendar Grouper**. Leave the **Calendar** box checked, then click **Continue**. You should see "Authorization successful!"
+3. On the warning screen, click **Advanced → Go to Calendar Grouper**. Leave every calendar box checked, then click **Continue**. You should see "Authorization successful!"
    If you already granted access while running locally, there are no checkboxes. The screen says the app "already has some access". That's fine; click **Continue**.
 
 This saves a fresh, non-expiring token in Firestore. Only the accounts in `ALLOWED_EMAILS` are allowed to sign in. (You'll also sign in from the extension in step 6; this step just confirms sign-in works on the cloud backend.)
