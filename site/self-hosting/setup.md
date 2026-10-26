@@ -59,9 +59,12 @@ The OAuth settings now live in the **Google Auth Platform**, which has separate 
 
 ### 2b — Add scopes
 1. Left sidebar → **Data Access** → **Add or remove scopes**.
-2. Scroll to **Manually add scopes** at the bottom of the panel and paste both of these (one per line):
+2. Scroll to **Manually add scopes** at the bottom of the panel and paste these five (one per line):
    ```
-   https://www.googleapis.com/auth/calendar
+   https://www.googleapis.com/auth/calendar.calendarlist.readonly
+   https://www.googleapis.com/auth/calendar.events.readonly
+   https://www.googleapis.com/auth/calendar.app.created
+   https://www.googleapis.com/auth/calendar.acls
    https://www.googleapis.com/auth/userinfo.email
    ```
 3. Click **Add to table** → **Update** → **Save** at the bottom of the page.
@@ -160,7 +163,7 @@ The expected response is `{"status":"ok"}`.
 1. Open http://localhost:3000/auth/login in your browser.
 2. Choose your Google account.
 3. At **"Google hasn't verified this app,"** click **Continue**. (On some versions of the screen it's **Advanced** → **Go to Calendar Grouper**.)
-4. On the permissions screen, **make sure the Calendar permission checkbox is checked.** Google lets you untick individual scopes, and if Calendar is unticked, everything after this step fails. Then click **Continue**.
+4. On the permissions screen, **make sure every calendar permission checkbox is checked.** Google lets you untick individual permissions, and if any calendar one is unticked, later steps fail. Then click **Continue**.
 5. You should see **"Authorization successful!"**
 6. Go to the Cloud console → **Firestore** → **Firestore Studio** (or **Data**). You should see a `users` collection containing one document, named with your Google user ID.
 
@@ -245,7 +248,7 @@ Everything above runs on your laptop. To keep syncing while it's off, follow **[
 | `redirect_uri_mismatch` | 2d | The redirect URI matches exactly: http, port 3000, no trailing slash |
 | "Access blocked" at sign-in | 2c | Your email is listed under Test users |
 | Backend crashes on start | 4 | The key file path and the project ID in `.env` |
-| Calendar API 403 / insufficient scopes | 5 | The Calendar checkbox was ticked during consent; sign in again |
+| Calendar API 403 / insufficient scopes | 5 | Every calendar checkbox was ticked during consent, and Data Access lists all five scopes; sign in again |
 | Blank popup | 6 | Inspect the popup → Console for the error |
 | CORS error in popup | 7 | `EXTENSION_ID` is set in `.env` and doesn't include this extension's ID. Remove it |
 | "Watch not registered" | 8 | Expected on localhost; auto-sync covers it |

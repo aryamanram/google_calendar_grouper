@@ -36,10 +36,18 @@ require.cache[src("models/firestore.js")] = { id: src("models/firestore.js"), fi
 
 // ---- Fake Google sign-in -----------------------------------------------------
 let nextProfile = { id: "u-owner", email: "owner@example.com" };
+const ALL_SCOPES = [
+  "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
+  "https://www.googleapis.com/auth/calendar.events.readonly",
+  "https://www.googleapis.com/auth/calendar.app.created",
+  "https://www.googleapis.com/auth/calendar.acls",
+  "https://www.googleapis.com/auth/userinfo.email",
+].join(" ");
+let nextScope = ALL_SCOPES;
 const fakeGoogleApi = {
   createOAuth2Client: () => ({
     generateAuthUrl: ({ state }) => `https://accounts.google.com/o/oauth2/auth?state=${encodeURIComponent(state)}`,
-    getToken: async () => ({ tokens: { access_token: "a", refresh_token: "r" } }),
+    getToken: async () => ({ tokens: { access_token: "a", refresh_token: "r", scope: nextScope } }),
     setCredentials() {},
   }),
   forgetAuthClient() {},
@@ -153,5 +161,16 @@ test("EXTENSION_ID, when set, limits which copies can sign in", async () => {
     assert.equal((await fetch(`${base}/auth/login?ext=ponmlkjihgfedcbaponmlkjihgfedcba`, { redirect: "manual" })).status, 302);
   } finally {
     delete process.env.EXTENSION_ID;
+  }
+});
+
+test("a sign-in with an unticked permission is refused", async () => {
+  nextScope = ALL_SCOPES.replace(" https://www.googleapis.com/auth/calendar.acls", "");
+  try {
+    const res = await signIn({ id: "u-owner", email: "owner@example.com" });
+    assert.equal(res.status, 400);
+    assert.match(await res.text(), /every permission/);
+  } finally {
+    nextScope = ALL_SCOPES;
   }
 });

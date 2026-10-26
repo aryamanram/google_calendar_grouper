@@ -17,7 +17,10 @@ There's no public Calendar Grouper service. Each copy runs on a backend in its o
 
 When you sign in with Google, you grant two permissions:
 
-- **Google Calendar** (`calendar`): used to list your calendars, read events from the calendars you select, create the one shared calendar, copy events into it and keep them in sync, and manage who that shared calendar is shared with. Calendar Grouper never changes or deletes events on your own calendars.
+- **See your list of calendars** (`calendar.calendarlist.readonly`): so you can pick which ones to include.
+- **View events on your calendars** (`calendar.events.readonly`): to read events from the calendars you select. This permission is read-only, so Calendar Grouper can't change or delete anything on your own calendars.
+- **Make secondary calendars and manage their events** (`calendar.app.created`): to create the one shared calendar, copy events into it and keep them in sync, rename it, and delete it when you ask. It only covers calendars Calendar Grouper created.
+- **Manage sharing of calendars you own** (`calendar.acls`): to share the shared calendar with the people you add, and stop sharing when you remove them. Calendar Grouper only changes sharing on the calendar it created.
 - **Your email address** (`userinfo.email`): used to identify your account and to check that it's allowed to sign in.
 
 ## What is stored

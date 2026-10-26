@@ -16,12 +16,22 @@ function acceptedExtensionId(id) {
   return ids.length === 0 || ids.includes(id) ? id : null;
 }
 
-// The scopes we need:
-// - calendar: full read/write to create merged calendars, insert events, manage ACLs
-// - calendar.events.readonly would be enough for source calendars, but since we
-//   also need to write to the merged calendar, full calendar scope is simpler.
+// The narrowest scopes that cover what the backend does. Google's
+// verification review asks for exactly this, and people see a shorter, less
+// alarming consent screen.
+//   calendarlist.readonly  list your calendars, so you can pick sources
+//   events.readonly        read events on the calendars you picked (and
+//                          watch them for changes); never write to them
+//   app.created            create the shared calendar, rename or delete it,
+//                          and write the copied events into it; it can't
+//                          touch any calendar this app didn't create
+//   acls                   share the shared calendar with the people you add
+//   userinfo.email         who you are, to check you're allowed to sign in
 const SCOPES = [
-  "https://www.googleapis.com/auth/calendar",
+  "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
+  "https://www.googleapis.com/auth/calendar.events.readonly",
+  "https://www.googleapis.com/auth/calendar.app.created",
+  "https://www.googleapis.com/auth/calendar.acls",
   "https://www.googleapis.com/auth/userinfo.email",
 ];
 
@@ -74,6 +84,22 @@ router.get("/callback", async (req, res) => {
   try {
     const client = createOAuth2Client();
     const { tokens } = await client.getToken(code);
+
+    // Google lets people untick individual permissions. Without all of them
+    // syncing fails later in confusing ways, so stop here and say so.
+    const granted = new Set(String(tokens.scope || "").split(/\s+/));
+    const missing = SCOPES.filter((s) => !granted.has(s));
+    if (tokens.scope && missing.length) {
+      console.warn(`Sign-in missing permissions: ${missing.join(" ")}`);
+      return res
+        .status(400)
+        .send(
+          page(
+            "Calendar Grouper needs every permission",
+            "Some boxes were unticked on Google's permissions screen. Close this window and sign in again, leaving all of them ticked."
+          )
+        );
+    }
     client.setCredentials(tokens);
 
     // The Google profile gives a stable user ID and the email to check.
