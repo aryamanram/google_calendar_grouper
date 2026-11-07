@@ -7,7 +7,7 @@ lastUpdated: false
 
 # Privacy policy
 
-*Effective October 21, 2026*
+*Effective November 6, 2026*
 
 Calendar Grouper is open-source software by Aryaman Ramchandran. It combines Google Calendars you choose into one shared calendar. This policy explains what it accesses, what it stores, and how to remove it.
 
@@ -42,6 +42,18 @@ Calendar Grouper keeps a small amount of data in a Google Cloud Firestore databa
 The extension also keeps a few settings in your browser (`chrome.storage.local`): the backend address, your session token, and the signed-in account's ID and email. **Sign out** removes the token, ID and email, and ends the session on the backend; removing the extension deletes all of it. The extension reads web pages only on `calendargrouper.com/join`, to pick up an invite link you opened.
 
 Server logs record calendar names, event counts and errors, and are kept under Google Cloud's default log retention. They don't contain event contents.
+
+## How your data is protected
+
+- **Encrypted in transit.** Every connection uses HTTPS (TLS): between the extension and the backend, between the backend and Google's APIs, and to this website.
+- **Encrypted at rest.** Stored data lives in Google Cloud Firestore, which encrypts all data at rest (AES-256) by default.
+- **Sign-in tokens.** Google sign-in tokens are kept only in that encrypted database, are used only by the backend to sync your calendars, and are never sent to the extension, the website or anyone else. Revoking access in your Google Account makes them useless immediately.
+- **Session tokens.** The extension's session token is random and is stored on the backend only as a one-way SHA-256 hash, so a copy of the database can't be used to sign in as you.
+- **Secrets.** The app's OAuth client secret and other keys are kept in Google Secret Manager, never in the code, the database or the extension.
+- **Least access.** The backend runs as a dedicated service account that can only read and write its own Firestore database and read its own secrets. Only the operator can reach the Google Cloud project, protected by their Google account's sign-in and two-step verification.
+- **Least data.** The app asks Google for the narrowest permissions that work: it can only read your own calendars, never change them. Event titles, descriptions and locations are never written to its database.
+- **Access checks.** Only signed-in accounts the operator allows can use the backend. Every request is checked against the signed-in account, so nobody can read or change someone else's settings.
+- **If something goes wrong.** If we learn that data was accessed without permission, we'll revoke the affected sign-ins, fix the cause, and tell affected users by email as soon as we can.
 
 ## This website
 
